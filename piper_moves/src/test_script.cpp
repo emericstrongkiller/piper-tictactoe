@@ -12,13 +12,13 @@
 
 // program variables
 static const rclcpp::Logger LOGGER = rclcpp::get_logger("move_group_node");
-static const std::string PLANNING_GROUP_ROBOT = "ur_manipulator";
+static const std::string PLANNING_GROUP_ROBOT = "arm";
 
-class KinematicsPluginTrajectory {
+class JointSpaceTrajectory {
 public:
-  KinematicsPluginTrajectory(rclcpp::Node::SharedPtr base_node_)
+  JointSpaceTrajectory(rclcpp::Node::SharedPtr base_node_)
       : base_node_(base_node_) {
-    RCLCPP_INFO(LOGGER, "Initializing Class: Kinematics Plugin Trajectory...");
+    RCLCPP_INFO(LOGGER, "Initializing Class: Joint Space Trajectory...");
 
     // configure node options
     rclcpp::NodeOptions node_options;
@@ -63,18 +63,17 @@ public:
     move_group_robot_->setStartStateToCurrentState();
 
     // indicate initialization
-    RCLCPP_INFO(LOGGER, "Class Initialized: Kinematics Plugin Trajectory");
+    RCLCPP_INFO(LOGGER, "Class Initialized: Joint Space Trajectory");
   }
 
-  ~KinematicsPluginTrajectory() {
+  ~JointSpaceTrajectory() {
     // indicate termination
-    RCLCPP_INFO(LOGGER, "Class Terminated: Kinematics Plugin Trajectory");
+    RCLCPP_INFO(LOGGER, "Class Terminated: Joint Space Trajectory");
   }
 
   void execute_trajectory_plan() {
-    RCLCPP_INFO(LOGGER, "Planning and Executing Kinematics Plugin Trajectory...");
+    RCLCPP_INFO(LOGGER, "Planning Joint Space Trajectory...");
 
-    RCLCPP_INFO(LOGGER, "Going to Home Position...");
     // setup the joint value target
     RCLCPP_INFO(LOGGER, "Preparing Joint Value Trajectory...");
     setup_joint_value_target(+0.0000, -2.3562, +1.5708, -1.5708, -1.5708,
@@ -82,21 +81,8 @@ public:
     // plan and execute the trajectory
     RCLCPP_INFO(LOGGER, "Planning Joint Value Trajectory...");
     plan_trajectory_kinematics();
-    RCLCPP_INFO(LOGGER, "Executing Joint Value Trajectory...");
-    execute_trajectory_kinematics();
 
-    RCLCPP_INFO(LOGGER, "Going to Pregrasp Position...");
-    // setup the goal pose target
-    RCLCPP_INFO(LOGGER, "Preparing Goal Pose Trajectory...");
-    setup_goal_pose_target(+0.343, +0.132, +0.264, -1.000, +0.000, +0.000,
-                           +0.000);
-    // plan and execute the trajectory
-    RCLCPP_INFO(LOGGER, "Planning Goal Pose Trajectory...");
-    plan_trajectory_kinematics();
-    RCLCPP_INFO(LOGGER, "Executing Goal Pose Trajectory...");
-    execute_trajectory_kinematics();
-
-    RCLCPP_INFO(LOGGER, "Kinematics Plugin Trajectory Execution Complete");
+    RCLCPP_INFO(LOGGER, "Joint Space Trajectory Planning Complete");
   }
 
 private:
@@ -141,20 +127,6 @@ private:
     move_group_robot_->setJointValueTarget(joint_group_positions_robot_);
   }
 
-  void setup_goal_pose_target(float pos_x, float pos_y, float pos_z,
-                              float quat_x, float quat_y, float quat_z,
-                              float quat_w) {
-    // set the pose values for end effector of robot arm
-    target_pose_robot_.position.x = pos_x;
-    target_pose_robot_.position.y = pos_y;
-    target_pose_robot_.position.z = pos_z;
-    target_pose_robot_.orientation.x = quat_x;
-    target_pose_robot_.orientation.y = quat_y;
-    target_pose_robot_.orientation.z = quat_z;
-    target_pose_robot_.orientation.w = quat_w;
-    move_group_robot_->setPoseTarget(target_pose_robot_);
-  }
-
   void plan_trajectory_kinematics() {
     // plan the trajectory to target using kinematics
     plan_success_robot_ =
@@ -162,17 +134,7 @@ private:
          moveit::core::MoveItErrorCode::SUCCESS);
   }
 
-  void execute_trajectory_kinematics() {
-    // execute the planned trajectory to target using kinematics
-    if (plan_success_robot_) {
-      move_group_robot_->execute(kinematics_trajectory_plan_);
-      RCLCPP_INFO(LOGGER, "Robot Kinematics Trajectory Success !");
-    } else {
-      RCLCPP_INFO(LOGGER, "Robot Kinematics Trajectory Failed !");
-    }
-  }
-
-}; // class KinematicsPluginTrajectory
+}; // class JointSpaceTrajectory
 
 int main(int argc, char **argv) {
 
@@ -181,13 +143,13 @@ int main(int argc, char **argv) {
 
   // initialize base_node as shared pointer
   std::shared_ptr<rclcpp::Node> base_node =
-      std::make_shared<rclcpp::Node>("kinematics_plugin_trajectory");
+      std::make_shared<rclcpp::Node>("joint_space_trajectory");
 
   // instantiate class
-  KinematicsPluginTrajectory kinematics_plugin_trajectory_node(base_node);
+  JointSpaceTrajectory joint_space_trajectory_node(base_node);
 
   // execute trajectory plan
-  kinematics_plugin_trajectory_node.execute_trajectory_plan();
+  joint_space_trajectory_node.execute_trajectory_plan();
 
   // shutdown ros2 node
   rclcpp::shutdown();
