@@ -80,14 +80,14 @@ public:
   }
 
   void target_plan() {
-    // piper_interface_->setPositionTarget(0.2, -0.1, 0.2, "link6");
-
-    // setup_goal_pose_target(0.211855, 0.107601, 0.213981, -0.000077, 1.000000,
-    //                      -0.000062, 0.000089);
-
+    // set speed
     plan_fraction_robot_ = piper_interface_->computeCartesianPath(
         generate_circle_pose_targets(), end_effector_step_, jump_threshold_,
         cartesian_trajectory_plan_);
+
+    RCLCPP_INFO(
+        logger_,
+        "ABOUT TO CONDITION OVER plan_fraction_robot_ Percentage of Success");
 
     if (plan_fraction_robot_ >= 0.6) {
       RCLCPP_INFO(logger_,
@@ -139,8 +139,8 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_circle_pose_targets(double radius = 0.004,
-                               double nb_waypoints = 100) {
+  generate_circle_pose_targets(double radius = 0.015,
+                               double nb_waypoints = 200) {
     std::vector<geometry_msgs::msg::Pose> targets;
     piper_curr_pos_ = piper_interface_->getCurrentPose();
     RCLCPP_INFO(
@@ -153,7 +153,7 @@ public:
         piper_curr_pos_.pose.orientation.y, piper_curr_pos_.pose.orientation.z,
         piper_curr_pos_.pose.orientation.w);
 
-    // first half of the circle
+    // circle gen
     for (int j = 0; j < nb_waypoints; j++) {
       geometry_msgs::msg::Pose step_goal;
       step_goal.orientation = piper_curr_pos_.pose.orientation;
@@ -168,14 +168,150 @@ public:
       step_goal.position.y = piper_curr_pos_.pose.position.y + y_offset;
 
       targets.push_back(step_goal);
-      RCLCPP_INFO(logger_,
-                  "[%d]  |  x:%f | y:%f |  z:%f | ori_x:%f | ori_y:%f | "
-                  "ori_z:%f | ori_w:%f",
-                  j, targets[j].position.x, targets[j].position.y,
-                  targets[j].position.z, targets[j].orientation.x,
-                  targets[j].orientation.y, targets[j].orientation.z,
-                  targets[j].orientation.w);
     }
+
+    return targets;
+  }
+
+  std::vector<geometry_msgs::msg::Pose>
+  generate_cross_pose_targets(double retract_amount = 0.01,
+                              double square_size = 0.03) {
+    std::vector<geometry_msgs::msg::Pose> targets;
+    piper_curr_pos_ = piper_interface_->getCurrentPose();
+    RCLCPP_INFO(
+        logger_,
+        "Piper Init Pose: \npiper_x: %f \npiper_y: %f \npiper_z: %f "
+        "\npiper_ori_x: %f \npiper_ori_y: %f \npiper_ori_z: %f "
+        "\npiper_ori_w: %f",
+        piper_curr_pos_.pose.position.x, piper_curr_pos_.pose.position.y,
+        piper_curr_pos_.pose.position.z, piper_curr_pos_.pose.orientation.x,
+        piper_curr_pos_.pose.orientation.y, piper_curr_pos_.pose.orientation.z,
+        piper_curr_pos_.pose.orientation.w);
+
+    // cross figure
+    geometry_msgs::msg::Pose step_goal;
+    step_goal.orientation = piper_curr_pos_.pose.orientation;
+    step_goal.position.z = piper_curr_pos_.pose.position.z;
+    RCLCPP_INFO(logger_, "GOT HERRRE");
+
+    // starting point: upper left corner
+    step_goal.position.x = piper_curr_pos_.pose.position.x + square_size / 2;
+    step_goal.position.y = piper_curr_pos_.pose.position.y + square_size / 2;
+    targets.push_back(step_goal);
+    // engage movement (down z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z - retract_amount;
+    targets.push_back(step_goal);
+    // opposite side
+    step_goal.position.x = piper_curr_pos_.pose.position.x - square_size / 2;
+    step_goal.position.y = piper_curr_pos_.pose.position.y - square_size / 2;
+    targets.push_back(step_goal);
+
+    // retract movement
+    step_goal.position.z = piper_curr_pos_.pose.position.z + retract_amount;
+    targets.push_back(step_goal);
+
+    // upper right corner
+    step_goal.position.x = piper_curr_pos_.pose.position.x + square_size / 2;
+    step_goal.position.y = piper_curr_pos_.pose.position.y - square_size / 2;
+    targets.push_back(step_goal);
+    // engage movement (down z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z - retract_amount;
+    targets.push_back(step_goal);
+    // opposite side of upper right corner
+    step_goal.position.x = piper_curr_pos_.pose.position.x - square_size / 2;
+    step_goal.position.y = piper_curr_pos_.pose.position.y + square_size / 2;
+    targets.push_back(step_goal);
+
+    // final retract movement
+    step_goal.position.z = piper_curr_pos_.pose.position.z + retract_amount;
+    targets.push_back(step_goal);
+    RCLCPP_INFO(logger_, "FINISHED CROSS TRAJECTORY PLANNING");
+
+    return targets;
+  }
+
+  std::vector<geometry_msgs::msg::Pose>
+  generate_grid_pose_targets(double retract_amount = 0.01,
+                             double grid_size = 0.12) {
+    std::vector<geometry_msgs::msg::Pose> targets;
+    piper_curr_pos_ = piper_interface_->getCurrentPose();
+    RCLCPP_INFO(
+        logger_,
+        "Piper Init Pose: \npiper_x: %f \npiper_y: %f \npiper_z: %f "
+        "\npiper_ori_x: %f \npiper_ori_y: %f \npiper_ori_z: %f "
+        "\npiper_ori_w: %f",
+        piper_curr_pos_.pose.position.x, piper_curr_pos_.pose.position.y,
+        piper_curr_pos_.pose.position.z, piper_curr_pos_.pose.orientation.x,
+        piper_curr_pos_.pose.orientation.y, piper_curr_pos_.pose.orientation.z,
+        piper_curr_pos_.pose.orientation.w);
+
+    // Constant orientation
+    geometry_msgs::msg::Pose step_goal;
+    step_goal.orientation = piper_curr_pos_.pose.orientation;
+    step_goal.position.z = piper_curr_pos_.pose.position.z;
+
+    // bottom horizontal line (your existing one)
+    step_goal.position.x = piper_curr_pos_.pose.position.x - grid_size / 6;
+    step_goal.position.y = piper_curr_pos_.pose.position.y + grid_size / 2;
+    targets.push_back(step_goal);
+    // (down z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z - retract_amount;
+    targets.push_back(step_goal);
+    // trace line
+    step_goal.position.x = piper_curr_pos_.pose.position.x - grid_size / 6;
+    step_goal.position.y = piper_curr_pos_.pose.position.y - grid_size / 2;
+    targets.push_back(step_goal);
+    // (up z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z + retract_amount;
+    targets.push_back(step_goal);
+
+    // top horizontal line
+    step_goal.position.z = piper_curr_pos_.pose.position.z;
+    step_goal.position.x = piper_curr_pos_.pose.position.x + grid_size / 6;
+    step_goal.position.y = piper_curr_pos_.pose.position.y + grid_size / 2;
+    targets.push_back(step_goal);
+    // (down z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z - retract_amount;
+    targets.push_back(step_goal);
+    // trace line
+    step_goal.position.x = piper_curr_pos_.pose.position.x + grid_size / 6;
+    step_goal.position.y = piper_curr_pos_.pose.position.y - grid_size / 2;
+    targets.push_back(step_goal);
+    // (up z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z + retract_amount;
+    targets.push_back(step_goal);
+
+    // right vertical line
+    step_goal.position.z = piper_curr_pos_.pose.position.z;
+    step_goal.position.x = piper_curr_pos_.pose.position.x + grid_size / 2;
+    step_goal.position.y = piper_curr_pos_.pose.position.y - grid_size / 6;
+    targets.push_back(step_goal);
+    // (down z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z - retract_amount;
+    targets.push_back(step_goal);
+    // trace line
+    step_goal.position.x = piper_curr_pos_.pose.position.x - grid_size / 2;
+    step_goal.position.y = piper_curr_pos_.pose.position.y - grid_size / 6;
+    targets.push_back(step_goal);
+    // (up z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z + retract_amount;
+    targets.push_back(step_goal);
+
+    // left vertical line
+    step_goal.position.z = piper_curr_pos_.pose.position.z;
+    step_goal.position.x = piper_curr_pos_.pose.position.x - grid_size / 2;
+    step_goal.position.y = piper_curr_pos_.pose.position.y + grid_size / 6;
+    targets.push_back(step_goal);
+    // (down z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z - retract_amount;
+    targets.push_back(step_goal);
+    // trace line
+    step_goal.position.x = piper_curr_pos_.pose.position.x + grid_size / 2;
+    step_goal.position.y = piper_curr_pos_.pose.position.y + grid_size / 6;
+    targets.push_back(step_goal);
+    // (up z)
+    step_goal.position.z = piper_curr_pos_.pose.position.z + retract_amount;
+    targets.push_back(step_goal);
 
     return targets;
   }
