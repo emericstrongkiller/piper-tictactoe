@@ -8,14 +8,11 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(rclcpp_action REQUIRED)
-find_package(moveit REQUIRED)
 find_package(moveit_core REQUIRED)
-find_package(moveit_ros_planning_interface REQUIRED)
-find_package(interactive_markers REQUIRED)
-find_package(moveit_ros_planning REQUIRED)
-find_package(control_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
 find_package(moveit_visual_tools REQUIRED)
+find_package(moveit_ros_planning_interface REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -34,21 +31,6 @@ if(BUILD_TESTING)
 endif()
 
 # Generate the executable
-add_executable(test_script
-    src/test_script.cpp)
-target_include_directories(test_script
-    PUBLIC include)
-ament_target_dependencies(test_script
-    ament_cmake
-    rclcpp
-    rclcpp_action
-    moveit_core
-    moveit_ros_planning_interface
-    interactive_markers
-    moveit_ros_planning
-    control_msgs)
-
-
 add_executable(X_draw_trajectory
     src/X_draw_trajectory.cpp)
 target_include_directories(X_draw_trajectory
@@ -56,30 +38,23 @@ target_include_directories(X_draw_trajectory
 ament_target_dependencies(X_draw_trajectory
     ament_cmake
     rclcpp
-    rclcpp_action
     moveit_ros_planning_interface
-    interactive_markers
-    control_msgs
 	moveit_visual_tools)
 
 
-add_executable(buffer
-    src/buffer.cpp)
-target_include_directories(buffer
+add_executable(piper_move_orders
+    src/piper_move_orders.cpp)
+target_include_directories(piper_move_orders
     PUBLIC include)
-ament_target_dependencies(buffer
+ament_target_dependencies(piper_move_orders
     ament_cmake
     rclcpp
-    rclcpp_action
-    moveit_ros_planning_interface
-    interactive_markers
-    control_msgs)
+	std_msgs)
 
 # Install the executable
 install(TARGETS 
-    test_script
 	X_draw_trajectory
-	buffer
+	piper_move_orders
     DESTINATION lib/${PROJECT_NAME}
 )
 

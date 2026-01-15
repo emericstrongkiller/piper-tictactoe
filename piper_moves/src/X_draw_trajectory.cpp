@@ -1,11 +1,17 @@
 // Moveit
+#include <cstddef>
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
+#include <moveit/trajectory_processing/time_optimal_trajectory_generation.h>
 // Moveit X rviz
 #include <moveit_visual_tools/moveit_visual_tools.h>
 // ROS2
 #include "rclcpp/executors.hpp"
+#include "rclcpp/executors/multi_threaded_executor.hpp"
+#include "rclcpp/generic_subscription.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp/subscription.hpp"
+#include "std_msgs/msg/int32_multi_array.hpp"
 // Cpp
 #include <cmath>
 #include <memory>
@@ -14,6 +20,13 @@
 #include <vector>
 
 using MoveGroupInterface = moveit::planning_interface::MoveGroupInterface;
+using namespace std::placeholders;
+
+const std::vector<std::vector<float>> grid_positions = {
+    {0.245, 0.065, 0.213},  {0.20, 0.065, 0.213},  {0.155, 0.065, 0.213},
+    {0.245, 0.020, 0.213},  {0.20, 0.020, 0.213},  {0.155, 0.020, 0.213},
+    {0.245, -0.025, 0.213}, {0.20, -0.025, 0.213}, {0.155, -0.025, 0.213},
+};
 
 class PiperTrajectory {
 public:
@@ -26,8 +39,14 @@ public:
         "X_draw_trajectory",
         rclcpp::NodeOptions().automatically_declare_parameters_from_overrides(
             true));
+    // piper_orders subscriber
+    piper_orders_subscriber_ =
+        node_->create_subscription<std_msgs::msg::Int32MultiArray>(
+            "/piper_move_orders", 10,
+            std::bind(&PiperTrajectory::piper_orders_callback, this, _1));
+
     // Exec
-    executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+    executor_ = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
 
     executor_->add_node(node_);
     spinner_ = std::make_shared<std::thread>([this]() { executor_->spin(); });
@@ -59,87 +78,106 @@ public:
                    "arm")](auto const trajectory) {
           moveit_visual_tools_->publishTrajectoryLine(trajectory, jmg);
         };
-  }
 
-  void init() {
-    // piper curr infos
-    RCLCPP_INFO(logger_, "Planning Frame: %s",
-                piper_interface_->getPlanningFrame().c_str());
-    RCLCPP_INFO(logger_, "End Effector Link: %s",
-                piper_interface_->getEndEffectorLink().c_str());
-    RCLCPP_INFO(logger_, "Available Planning Groups:");
-    std::vector<std::string> group_names =
-        piper_interface_->getJointModelGroupNames();
-    // more efficient method than std::copy() method used in the docs
-    for (long unsigned int i = 0; i < group_names.size(); i++) {
-      RCLCPP_INFO(logger_, "Group %ld: %s", i, group_names[i].c_str());
-    }
-
-    // set start state of robot to current state
-    piper_interface_->setStartStateToCurrentState();
+    // variables
+    //  init current_order
+    current_order_ = {0, 0};
   }
 
   void target_plan() {
-    // set speed
-    plan_fraction_robot_ = piper_interface_->computeCartesianPath(
-        generate_circle_pose_targets(), end_effector_step_, jump_threshold_,
-        cartesian_trajectory_plan_);
+    for (int i = 0; i < 10; i++) {
+      // get piper Pose
+      piper_curr_pos_ = piper_interface_->getCurrentPose();
+      RCLCPP_INFO(logger_, "got EndEffector: %s",
+                  piper_interface_->getEndEffectorLink().c_str());
+      RCLCPP_INFO(
+          logger_,
+          "got piper Pose: \npiper_x: %f \npiper_y: %f \npiper_z: %f "
+          "\npiper_ori_x: %f \npiper_ori_y: %f \npiper_ori_z: %f "
+          "\npiper_ori_w: %f",
+          piper_curr_pos_.pose.position.x, piper_curr_pos_.pose.position.y,
+          piper_curr_pos_.pose.position.z, piper_curr_pos_.pose.orientation.x,
+          piper_curr_pos_.pose.orientation.y,
+          piper_curr_pos_.pose.orientation.z,
+          piper_curr_pos_.pose.orientation.w);
 
-    RCLCPP_INFO(
-        logger_,
-        "ABOUT TO CONDITION OVER plan_fraction_robot_ Percentage of Success");
-
-    if (plan_fraction_robot_ >= 0.6) {
-      RCLCPP_INFO(logger_,
-                  "Valid Trajectory, about to execute it !\nPercent Valid: %f",
-                  plan_fraction_robot_);
-      piper_interface_->execute(cartesian_trajectory_plan_);
-    } else {
-      RCLCPP_INFO(logger_, "TRAJECTORY PLANNING FAILED\nPercent Valid: %f ",
-                  plan_fraction_robot_);
-    }
-
-    // get piper Pose
-    piper_curr_pos_ = piper_interface_->getCurrentPose();
-    RCLCPP_INFO(logger_, "got EndEffector: %s",
-                piper_interface_->getEndEffectorLink().c_str());
-    RCLCPP_INFO(
-        logger_,
-        "got piper Pose: \npiper_x: %f \npiper_y: %f \npiper_z: %f "
-        "\npiper_ori_x: %f \npiper_ori_y: %f \npiper_ori_z: %f "
-        "\npiper_ori_w: %f",
-        piper_curr_pos_.pose.position.x, piper_curr_pos_.pose.position.y,
-        piper_curr_pos_.pose.position.z, piper_curr_pos_.pose.orientation.x,
-        piper_curr_pos_.pose.orientation.y, piper_curr_pos_.pose.orientation.z,
-        piper_curr_pos_.pose.orientation.w);
-
-    // create plan
-    prompt_("Press 'Next' in the RvizVisualToolsGui window to plan");
-    draw_title_("Planning");
-    moveit_visual_tools_->trigger();
-    auto const [success, plan] = [this] {
-      MoveGroupInterface::Plan msg;
-      auto const ok = static_cast<bool>(piper_interface_->plan(msg));
-      return std::make_pair(ok, msg);
-    }();
-
-    // Execute plan
-    if (success) {
-      draw_trajectory_tool_path_(plan.trajectory_);
+      // pre-pose plan + execution
+      prompt_("Press 'Next' in the RvizVisualToolsGui to go to the ordered "
+              "pre-position (if any published in /piper_move_orders)");
+      draw_title_("pre-pose");
       moveit_visual_tools_->trigger();
-      prompt_("Press 'Next' in the RvizVisualToolsGui window to execute");
-      draw_title_("Executing");
+      // check piper current_order_ and go to this pos before all
+      if (current_order_[0] >= 0 && current_order_[0] < 10) {
+        int position_index = current_order_[0];
+        setup_goal_pose_target(
+            static_cast<float>(grid_positions[position_index][0]),
+            static_cast<float>(grid_positions[position_index][1]),
+            static_cast<float>(grid_positions[position_index][2]),
+            piper_curr_pos_.pose.orientation.x,
+            piper_curr_pos_.pose.orientation.y,
+            piper_curr_pos_.pose.orientation.z,
+            piper_curr_pos_.pose.orientation.w);
+        piper_interface_->plan(simple_plan_);
+        piper_interface_->execute(simple_plan_);
+      }
+
+      // create plan
+      prompt_("Press 'Next' in the RvizVisualToolsGui window to plan");
+      draw_title_("Planning");
       moveit_visual_tools_->trigger();
-      piper_interface_->execute(plan);
-    } else {
-      draw_title_("Planning-Failed!");
-      moveit_visual_tools_->trigger();
-      RCLCPP_ERROR(logger_, "Planning failed!");
+      if (current_order_[1] == 0) {
+        plan_fraction_robot_ = piper_interface_->computeCartesianPath(
+            generate_circle_pose_targets(), end_effector_step_, jump_threshold_,
+            cartesian_trajectory_plan_);
+      } else if (current_order_[1] == 1) {
+        plan_fraction_robot_ = piper_interface_->computeCartesianPath(
+            generate_cross_pose_targets(), end_effector_step_, jump_threshold_,
+            cartesian_trajectory_plan_);
+      } else if (current_order_[1] == 2) {
+        plan_fraction_robot_ = piper_interface_->computeCartesianPath(
+            generate_grid_pose_targets(), end_effector_step_, jump_threshold_,
+            cartesian_trajectory_plan_);
+      }
+
+      // Execute plan
+      if (plan_fraction_robot_ >= 0.6) {
+        draw_trajectory_tool_path_(cartesian_trajectory_plan_);
+        moveit_visual_tools_->trigger();
+        RCLCPP_INFO(logger_, "Valid Trajectory! Percent Valid: %f",
+                    plan_fraction_robot_);
+        prompt_("Press 'Next' in the RvizVisualToolsGui window to execute");
+        draw_title_("Executing");
+        moveit_visual_tools_->trigger();
+        // TOTG PART
+        // Convert to RobotTrajectory object
+        robot_trajectory::RobotTrajectory rt(piper_interface_->getRobotModel(),
+                                             "arm");
+        rt.setRobotTrajectoryMsg(*piper_interface_->getCurrentState(),
+                                 cartesian_trajectory_plan_);
+
+        // Time-parameterize with velocity/accel limits
+        trajectory_processing::TimeOptimalTrajectoryGeneration totg;
+        bool success = totg.computeTimeStamps(rt,
+                                              0.05, // vel scale
+                                              0.05  // accel scale
+        );
+        if (success) {
+          rt.getRobotTrajectoryMsg(cartesian_trajectory_plan_);
+          piper_interface_->execute(cartesian_trajectory_plan_);
+        } else {
+          RCLCPP_ERROR(logger_, "Execution failed, TOTG problem!");
+        }
+      } else {
+        draw_title_("Planning-Failed!");
+        moveit_visual_tools_->trigger();
+        RCLCPP_ERROR(logger_, "Planning failed!");
+      }
     }
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_circle_pose_targets(double radius = 0.015,
+  generate_circle_pose_targets(double retract_amount = 0.01,
+                               double radius = 0.015,
                                double nb_waypoints = 200) {
     std::vector<geometry_msgs::msg::Pose> targets;
     piper_curr_pos_ = piper_interface_->getCurrentPose();
@@ -153,11 +191,11 @@ public:
         piper_curr_pos_.pose.orientation.y, piper_curr_pos_.pose.orientation.z,
         piper_curr_pos_.pose.orientation.w);
 
+    geometry_msgs::msg::Pose step_goal;
     // circle gen
     for (int j = 0; j < nb_waypoints; j++) {
-      geometry_msgs::msg::Pose step_goal;
       step_goal.orientation = piper_curr_pos_.pose.orientation;
-      step_goal.position.z = piper_curr_pos_.pose.position.z;
+      step_goal.position.z = piper_curr_pos_.pose.position.z - retract_amount;
 
       double current_angle = 2 * M_PI * j / nb_waypoints;
 
@@ -169,6 +207,10 @@ public:
 
       targets.push_back(step_goal);
     }
+
+    // retract movement
+    step_goal.position.z = piper_curr_pos_.pose.position.z;
+    targets.push_back(step_goal);
 
     return targets;
   }
@@ -330,15 +372,25 @@ public:
     piper_interface_->setPoseTarget(target_pose_robot_);
   }
 
+  void
+  piper_orders_callback(const std_msgs::msg::Int32MultiArray::SharedPtr order) {
+    RCLCPP_INFO(logger_, "Received order!: [%d, %d]", order->data[0],
+                order->data[1]);
+    current_order_[0] = order->data[0];
+    current_order_[1] = order->data[1];
+  }
+
   // getters
   std::thread &spinner() { return *spinner_; }
 
 private:
-  // Node and executor
+  // Node, Pub/Sub and executor
   std::shared_ptr<MoveGroupInterface> piper_interface_;
   rclcpp::Logger logger_;
   std::shared_ptr<rclcpp::Node> node_;
-  std::shared_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
+  rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
+      piper_orders_subscriber_;
+  std::shared_ptr<rclcpp::executors::MultiThreadedExecutor> executor_;
   std::shared_ptr<std::thread> spinner_;
   // Robot infos
   geometry_msgs::msg::Pose target_pose_robot_;
@@ -354,6 +406,9 @@ private:
   std::function<void(const moveit_msgs::msg::RobotTrajectory &)>
       draw_trajectory_tool_path_;
   std::shared_ptr<moveit_visual_tools::MoveItVisualTools> moveit_visual_tools_;
+  // piper orders
+  std::array<int32_t, 2> current_order_;
+  MoveGroupInterface::Plan simple_plan_;
 };
 
 int main(int argc, char **argv) {

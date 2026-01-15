@@ -1,0 +1,7 @@
+- make a simple node that creates a topic called : /piper_move_order with two floats (position, shape)
+- make X_trajectory thing subscribe to this topic (executor shit and things   to verify)
+- add the registered positions from step 2.4 into the X_trajectory.cpp 
+- add a step to look the value in /piper_move_order and go to the specified position before doing cross or circle depending on /piper_move_order[shape]
+- loop this in X_traj thing
+- add in X_traj a publisher to /piper_move_response with a boolean to tell the other node when its done with the move
+- make the simple Cpp node check when the guy is done and print something in the logs when its done.

@@ -1,0 +1,18 @@
+# 0. refresh apt-key
+sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F42ED6FBAB17C654
+
+
+
+# 1. Try without config (use defaults):
+zenoh-bridge-ros2dds
+
+# 2. Check config syntax:
+cat ~/ros2_ws/src/zenoh-pointcloud/config/zenoh-plugin-dds/rosject_config.json5
+
+# 3. If config looks OK, increase stack size:
+ulimit -s unlimited
+./zenoh_pointcloud_rosject.sh
+
+# 4. If still crashes, downgrade to working version:
+sudo apt-get remove --purge zenoh-bridge-ros2dds
+sudo apt-get install zenoh-bridge-ros2dds=0.11.0-rc.3
