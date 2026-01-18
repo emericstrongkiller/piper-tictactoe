@@ -13,6 +13,9 @@ find_package(moveit_msgs REQUIRED)
 find_package(moveit_visual_tools REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -51,10 +54,22 @@ ament_target_dependencies(piper_move_orders
     rclcpp
 	std_msgs)
 
+add_executable(take_pic
+    src/take_pic.cpp)
+target_include_directories(take_pic
+    PUBLIC include)
+ament_target_dependencies(take_pic
+    ament_cmake
+    rclcpp
+	sensor_msgs
+	cv_bridge
+	OpenCV)
+
 # Install the executable
 install(TARGETS 
 	X_draw_trajectory
 	piper_move_orders
+	take_pic
     DESTINATION lib/${PROJECT_NAME}
 )
 

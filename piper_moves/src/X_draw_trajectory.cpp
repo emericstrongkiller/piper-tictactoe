@@ -9,8 +9,10 @@
 #include "rclcpp/executors.hpp"
 #include "rclcpp/executors/multi_threaded_executor.hpp"
 #include "rclcpp/generic_subscription.hpp"
+#include "rclcpp/publisher.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/subscription.hpp"
+#include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/int32_multi_array.hpp"
 // Cpp
 #include <cmath>
@@ -44,6 +46,9 @@ public:
         node_->create_subscription<std_msgs::msg::Int32MultiArray>(
             "/piper_move_orders", 10,
             std::bind(&PiperTrajectory::piper_orders_callback, this, _1));
+    piper_orders_response_publisher_ =
+        node_->create_publisher<std_msgs::msg::Bool>(
+            "/piper_move_orders_response_", 10);
 
     // Exec
     executor_ = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
@@ -112,11 +117,8 @@ public:
         setup_goal_pose_target(
             static_cast<float>(grid_positions[position_index][0]),
             static_cast<float>(grid_positions[position_index][1]),
-            static_cast<float>(grid_positions[position_index][2]),
-            piper_curr_pos_.pose.orientation.x,
-            piper_curr_pos_.pose.orientation.y,
-            piper_curr_pos_.pose.orientation.z,
-            piper_curr_pos_.pose.orientation.w);
+            static_cast<float>(grid_positions[position_index][2]), 0.000034,
+            1.000000, -0.000004, 0.000027);
         piper_interface_->plan(simple_plan_);
         piper_interface_->execute(simple_plan_);
       }
@@ -164,6 +166,9 @@ public:
         if (success) {
           rt.getRobotTrajectoryMsg(cartesian_trajectory_plan_);
           piper_interface_->execute(cartesian_trajectory_plan_);
+          RCLCPP_INFO(logger_, "Successfully executed the order!");
+          current_order_response_.data = true;
+          piper_orders_response_publisher_->publish(current_order_response_);
         } else {
           RCLCPP_ERROR(logger_, "Execution failed, TOTG problem!");
         }
@@ -234,7 +239,6 @@ public:
     geometry_msgs::msg::Pose step_goal;
     step_goal.orientation = piper_curr_pos_.pose.orientation;
     step_goal.position.z = piper_curr_pos_.pose.position.z;
-    RCLCPP_INFO(logger_, "GOT HERRRE");
 
     // starting point: upper left corner
     step_goal.position.x = piper_curr_pos_.pose.position.x + square_size / 2;
@@ -267,7 +271,6 @@ public:
     // final retract movement
     step_goal.position.z = piper_curr_pos_.pose.position.z + retract_amount;
     targets.push_back(step_goal);
-    RCLCPP_INFO(logger_, "FINISHED CROSS TRAJECTORY PLANNING");
 
     return targets;
   }
@@ -390,6 +393,8 @@ private:
   std::shared_ptr<rclcpp::Node> node_;
   rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
       piper_orders_subscriber_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr
+      piper_orders_response_publisher_;
   std::shared_ptr<rclcpp::executors::MultiThreadedExecutor> executor_;
   std::shared_ptr<std::thread> spinner_;
   // Robot infos
@@ -409,6 +414,7 @@ private:
   // piper orders
   std::array<int32_t, 2> current_order_;
   MoveGroupInterface::Plan simple_plan_;
+  std_msgs::msg::Bool current_order_response_;
 };
 
 int main(int argc, char **argv) {

@@ -1,7 +1,8 @@
-- make a simple node that creates a topic called : /piper_move_order with two floats (position, shape)
-- make X_trajectory thing subscribe to this topic (executor shit and things   to verify)
-- add the registered positions from step 2.4 into the X_trajectory.cpp 
-- add a step to look the value in /piper_move_order and go to the specified position before doing cross or circle depending on /piper_move_order[shape]
-- loop this in X_traj thing
-- add in X_traj a publisher to /piper_move_response with a boolean to tell the other node when its done with the move
-- make the simple Cpp node check when the guy is done and print something in the logs when its done.
+- Find a way to analyse this pic using take_pic node, find the lines of the grid, and output a new image withtred lines at the place of the grid lines
+- Now calculate the center of each grid square using the grid lines and output a new image with the square centers in red + their position in pixels
+- now create a double vector that represents the game grid and then calculate -based on the previous centers calculations- the intervals in x ans y in zhich a shape would be in so or so position in the grid
+- Store a now check the grid and try to use opencv to recognize any circle
+- same for cross
+- now calculate the center of each of them
+- then find to which grid sqware it is the most near and state in which position they are.
+- then generate an order at a random position that isn't occupied
