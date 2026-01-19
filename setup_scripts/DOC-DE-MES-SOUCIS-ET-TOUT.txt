@@ -1,0 +1,7 @@
+- La detection cetait good le filter et tt mais j;ai fait en sorte de filtre que 
+les lines qui etaient suffisamment proches les unes des autres en disant que si une 
+line etait pas entre genre 50 et 200 a cote dune autre ba tu pouvait la jerter
+- Then it was very hard to see the circles because HoughCircle was looking for perfect shit and stuff, then I found this thread:
+https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invariant-circle-detection-with-opencv-based-on  
+=> And tried MSER  (blob reco approach)
+- 
