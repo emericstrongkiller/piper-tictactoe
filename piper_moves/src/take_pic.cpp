@@ -77,9 +77,10 @@ private:
     cv::Mat templ = cv::imread(templ_path);
     cv::Mat processed_templ;
     cv::cvtColor(templ, processed_templ, cv::COLOR_BGR2GRAY);
-    find_crosses(match_image, processed_templ, image);
+    cv::Mat area_processed =
+        find_crosses(match_image, processed_templ, image, 8);
 
-    return image;
+    return area_processed;
   }
 
   void save_image(cv::Mat image) {
@@ -333,50 +334,45 @@ private:
     }
   }
 
-  void find_crosses(cv::Mat processed_image, cv::Mat processed_templ,
-                    cv::Mat image) {
+  cv::Mat find_crosses(cv::Mat processed_image, cv::Mat processed_templ,
+                       cv::Mat image, int area_of_interest_index) {
     // Template width and height
     const int w = processed_templ.cols;
     const int h = processed_templ.rows;
 
-    cv::Mat res;
-    cv::matchTemplate(processed_image, processed_templ, res,
-                      cv::TM_CCOEFF_NORMED);
-
-    // Create mask to 
-    cv::Mat masked = cv::Mat::zeros(res.size(), res.type());
-
-    cv::Point c = grid_centers_[8];
+    // create a smaller matrix in the area the caller wants to check for
+    // cross/circle
+    cv::Point c = grid_centers_[area_of_interest_index];
     float square_height = std::abs(center_square_infos_.first[0]);
     float square_length = std::abs(center_square_infos_.first[1]);
+    float res_x0 = c.x - square_length / 1.7;
+    float res_y0 = c.y - square_height / 1.7;
+    cv::Rect roi(res_x0, res_y0, square_length * 1.1, square_height * 1.1);
+    cv::Mat area_of_interest = processed_image(roi);
 
-    int res_x0 = c.x - square_length / 2;
-    int res_y0 = c.y - square_height / 2;
-    int res_x1 = c.x + square_length / 2;
-    int res_y1 = c.y + square_height / 2;
-
-    if (res_x1 > res_x0 && res_y1 > res_y0) {
-      cv::Rect roi(res_x0, res_y0, res_x1 - res_x0, res_y1 - res_y0);
-      res(roi).copyTo(masked(roi));
-      res = masked;
-    }
-
-    cv::rectangle(image, cv::Point(res_x0, res_y0), cv::Point(res_x1, res_y1),
-                  cv::Scalar(0, 0, 255), 2);
+    cv::Mat res;
+    cv::matchTemplate(area_of_interest, processed_templ, res,
+                      cv::TM_CCOEFF_NORMED);
 
     // Threshold
-    const double threshold = 0.3;
+    const double threshold = 0.35;
 
     // Find all locations with score >= threshold
-    for (int y = 0; y < masked.rows; ++y) {
-      for (int x = 0; x < masked.cols; ++x) {
-        float score = masked.at<float>(y, x);
+    for (int y = 0; y < res.rows; ++y) {
+      for (int x = 0; x < res.cols; ++x) {
+        float score = res.at<float>(y, x);
         if (score >= threshold) {
-          cv::rectangle(image, cv::Point(x, y), cv::Point(x + w, y + h),
-                        cv::Scalar(0, 255, 255), 2);
+          cv::circle(area_of_interest,
+                     cv::Point(x + square_length / 2, y + square_height / 2),
+                     10, cv::Scalar(0, 255, 255), 2);
+          //          cv::rectangle(image, cv::Point(x, y), cv::Point(x + w, y +
+          //          h),
+          //                        cv::Scalar(0, 255, 255), 2);
         }
       }
     }
+
+    return area_of_interest;
   }
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
