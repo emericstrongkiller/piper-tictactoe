@@ -3,5 +3,5 @@ les lines qui etaient suffisamment proches les unes des autres en disant que si 
 line etait pas entre genre 50 et 200 a cote dune autre ba tu pouvait la jerter
 - Then it was very hard to see the circles because HoughCircle was looking for perfect shit and stuff, then I found this thread:
 https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invariant-circle-detection-with-opencv-based-on  
-=> And tried MSER  (blob reco approach)
-- 
+=> And tried MSER  (blob reco approach)  AND IT WORKED HELLLLA GOOD AND Actually detected both cross and circle centers
+- Then I needed to separate Cross from circle.

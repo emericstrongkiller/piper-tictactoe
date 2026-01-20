@@ -75,6 +75,7 @@ install(TARGETS
 
 install(DIRECTORY
 	launch
+	templates
 	DESTINATION share/${PROJECT_NAME}
 )
 

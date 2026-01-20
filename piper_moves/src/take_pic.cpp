@@ -1,15 +1,17 @@
 #include "rclcpp/logging.hpp"
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstddef>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/opencv.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string>
-
-#include <cmath>
 #include <vector>
 
 class CameraSubscriber : public rclcpp::Node {
@@ -38,7 +40,6 @@ private:
 
     save_image(processed_image_);
 
-    // Equivalent to rclpy.shutdown(): stop spinning after first image
     rclcpp::shutdown();
   }
 
@@ -47,23 +48,36 @@ private:
     cv::Mat processed_image;
 
     cv::cvtColor(image, processed_image, cv::COLOR_BGR2GRAY);
+    // circle detection on gray image
+    std::vector<cv::KeyPoint> detected_circles =
+        detect_circles(processed_image);
+    // print_circles(detected_circles, image);
+
     cv::medianBlur(processed_image, processed_image, 11);
     cv::Canny(processed_image, processed_image, 100, 300, 3);
 
+    // detect and draw grid lines
     std::vector<std::vector<float>> grid_lines =
         detect_grid_lines(processed_image);
-
     std::vector<float> grid_h = grid_lines[0];
     std::vector<float> grid_v = grid_lines[1];
-    print_grid_lines(grid_h, grid_v, image);
+    // print_grid_lines(grid_h, grid_v, image);
 
-    std::pair<std::array<float, 2>, cv::Point> center_square_infos =
-        calculate_center_square_infos(grid_v, grid_h);
+    // detect and draw grid square centers
+    center_square_infos_ = calculate_center_square_infos(grid_v, grid_h);
+    grid_centers_ = calculate_all_grid_centers(center_square_infos_);
+    // print_grid_centers(grid_centers_, image);
 
-    std::vector<cv::Point> grid_centers =
-        calculate_all_grid_centers(center_square_infos);
-
-    print_grid_centers(grid_centers, image);
+    // Cross template matching test
+    cv::Mat match_image;
+    cv::cvtColor(image, match_image, cv::COLOR_BGR2GRAY);
+    auto pkg_share =
+        ament_index_cpp::get_package_share_directory("piper_moves");
+    std::string templ_path = pkg_share + "/templates/cross.png";
+    cv::Mat templ = cv::imread(templ_path);
+    cv::Mat processed_templ;
+    cv::cvtColor(templ, processed_templ, cv::COLOR_BGR2GRAY);
+    find_crosses(match_image, processed_templ, image);
 
     return image;
   }
@@ -268,9 +282,108 @@ private:
     }
   }
 
+  std::vector<cv::KeyPoint> detect_circles(cv::Mat image) {
+    // MSER detector
+    cv::Ptr<cv::MSER> detector = cv::MSER::create();
+
+    std::vector<cv::KeyPoint> fs;
+    detector->detect(image, fs);
+
+    std::sort(fs.begin(), fs.end(),
+              [](const cv::KeyPoint &a, const cv::KeyPoint &b) {
+                return a.size > b.size; // descending
+              });
+
+    std::vector<cv::KeyPoint> sfs;
+    sfs.reserve(fs.size());
+    for (const auto &x : fs) {
+      if (!suppressByLargerNearby(x, fs)) {
+        sfs.push_back(x);
+      }
+    }
+
+    return sfs;
+  }
+
+  static bool suppressByLargerNearby(const cv::KeyPoint &x,
+                                     const std::vector<cv::KeyPoint> &fs) {
+    for (const auto &f : fs) {
+      const float distx = f.pt.x - x.pt.x;
+      const float disty = f.pt.y - x.pt.y;
+      const float dist = std::sqrt(distx * distx + disty * disty);
+
+      if ((f.size > x.size) && (dist < f.size / 2.0f)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void print_circles(std::vector<cv::KeyPoint> detected_circles,
+                     cv::Mat image) {
+    const cv::Scalar d_red(65, 55, 150);   // BGR
+    const cv::Scalar l_red(200, 200, 250); // BGR
+
+    for (const auto &circle : detected_circles) {
+      const cv::Point center(cvRound(circle.pt.x), cvRound(circle.pt.y));
+      const int radius = cvRound(circle.size / 2.0f);
+
+      cv::circle(image, center, radius / 5, d_red, 2, cv::LINE_AA);
+      cv::circle(image, center, radius / 5, l_red, 1, cv::LINE_AA);
+    }
+  }
+
+  void find_crosses(cv::Mat processed_image, cv::Mat processed_templ,
+                    cv::Mat image) {
+    // Template width and height
+    const int w = processed_templ.cols;
+    const int h = processed_templ.rows;
+
+    cv::Mat res;
+    cv::matchTemplate(processed_image, processed_templ, res,
+                      cv::TM_CCOEFF_NORMED);
+
+    // Create mask to 
+    cv::Mat masked = cv::Mat::zeros(res.size(), res.type());
+
+    cv::Point c = grid_centers_[8];
+    float square_height = std::abs(center_square_infos_.first[0]);
+    float square_length = std::abs(center_square_infos_.first[1]);
+
+    int res_x0 = c.x - square_length / 2;
+    int res_y0 = c.y - square_height / 2;
+    int res_x1 = c.x + square_length / 2;
+    int res_y1 = c.y + square_height / 2;
+
+    if (res_x1 > res_x0 && res_y1 > res_y0) {
+      cv::Rect roi(res_x0, res_y0, res_x1 - res_x0, res_y1 - res_y0);
+      res(roi).copyTo(masked(roi));
+      res = masked;
+    }
+
+    cv::rectangle(image, cv::Point(res_x0, res_y0), cv::Point(res_x1, res_y1),
+                  cv::Scalar(0, 0, 255), 2);
+
+    // Threshold
+    const double threshold = 0.3;
+
+    // Find all locations with score >= threshold
+    for (int y = 0; y < masked.rows; ++y) {
+      for (int x = 0; x < masked.cols; ++x) {
+        float score = masked.at<float>(y, x);
+        if (score >= threshold) {
+          cv::rectangle(image, cv::Point(x, y), cv::Point(x + w, y + h),
+                        cv::Scalar(0, 255, 255), 2);
+        }
+      }
+    }
+  }
+
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
   // Image variables
   cv::Mat processed_image_;
+  std::vector<cv::Point> grid_centers_;
+  std::pair<std::array<float, 2>, cv::Point> center_square_infos_;
 };
 
 int main(int argc, char **argv) {
