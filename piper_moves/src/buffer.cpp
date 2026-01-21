@@ -1,73 +1,72 @@
-cv::Mat masked = cv::Mat::zeros(res.size(), res.type());
+// clustering with vote counting
+// horizontal lines
+std::vector<std::pair<float, int>> h_clusters; // (avg_position, vote_count)
+int cluster_start = 0;
+for (int i = 1; i <= static_cast<int>(h_lines.size()); i++) {
+  if (i == static_cast<int>(h_lines.size()) ||
+      h_lines[i] > h_lines[i - 1] + 10) {
+    float cluster_sum = 0;
+    int count = i - cluster_start;
+    for (int j = cluster_start; j < i; j++) {
+      cluster_sum += h_lines[j];
+    }
+    h_clusters.push_back({cluster_sum / count, count});
+    cluster_start = i;
+  }
+}
+// Sort by vote count (descending)
+std::sort(h_clusters.begin(), h_clusters.end(),
+          [](auto &a, auto &b) { return a.second > b.second; });
 
-// float square_height = center_square_infos_.first[0];
-// float square_length = center_square_infos_.first[1];
-float square_height = 500;
-float square_length = 500;
+// Find best pair with valid spacing (60-120 for horizontal)
+std::vector<float> clusterized_h_lines;
+for (size_t i = 0; i < h_clusters.size() && clusterized_h_lines.size() < 2;
+     i++) {
+  for (size_t j = i + 1;
+       j < h_clusters.size() && clusterized_h_lines.size() < 2; j++) {
+    float spacing = std::abs(h_clusters[i].first - h_clusters[j].first);
+    if (spacing >= 50 && spacing <= 200) {
+      clusterized_h_lines = {h_clusters[i].first, h_clusters[j].first};
+      break;
+    }
+  }
+}
+std::sort(clusterized_h_lines.begin(), clusterized_h_lines.end());
 
-// ROI in IMAGE coords around grid_centers_[0]
-cv::Point c = grid_centers_[0];
+// vertical lines (same logic)
+std::vector<std::pair<float, int>> v_clusters;
+cluster_start = 0;
+for (int i = 1; i <= static_cast<int>(v_lines.size()); i++) {
+  if (i == static_cast<int>(v_lines.size()) ||
+      v_lines[i] > v_lines[i - 1] + 20) {
+    float cluster_sum = 0;
+    int count = i - cluster_start;
+    for (int j = cluster_start; j < i; j++) {
+      cluster_sum += v_lines[j];
+    }
+    v_clusters.push_back({cluster_sum / count, count});
+    cluster_start = i;
+  }
+}
+std::sort(v_clusters.begin(), v_clusters.end(),
+          [](auto &a, auto &b) { return a.second > b.second; });
 
-// TEMPPP
-cv::rectangle(image,
-              cv::Point(c.x - square_height / 2, c.y - square_height / 2),
-              cv::Point(c.x + square_height / 2, c.y + square_height / 2),
-              cv::Scalar(0, 255, 255), 2);
+// Find best pair with valid spacing (70-130 for vertical)
+std::vector<float> clusterized_v_lines;
+for (size_t i = 0; i < v_clusters.size() && clusterized_v_lines.size() < 2;
+     i++) {
+  for (size_t j = i + 1;
+       j < v_clusters.size() && clusterized_v_lines.size() < 2; j++) {
+    float spacing = std::abs(v_clusters[i].first - v_clusters[j].first);
+    if (spacing >= 50 && spacing <= 300) {
+      clusterized_v_lines = {v_clusters[i].first, v_clusters[j].first};
+      break;
+    }
+  }
+}
+std::sort(clusterized_v_lines.begin(), clusterized_v_lines.end());
 
-int x0 = std::max(0, (int)std::round(c.x - square_length / 2));
-int y0 = std::max(0, (int)std::round(c.y - square_height / 2));
-int x1 =
-    std::min(processed_image.cols, (int)std::round(c.x + square_length / 2));
-int y1 =
-    std::min(processed_image.rows, (int)std::round(c.y + square_height / 2));
-
-// convert IMAGE ROI -> RES ROI (res is smaller by template size)
-x1 = std::min(x1, res.cols);
-y1 = std::min(y1, res.rows);
-
-x0 = std::clamp(x0, 0, res.cols - 1);
-y0 = std::clamp(y0, 0, res.rows - 1);
-x1 = std::clamp(x1, 0, res.cols - 1);
-y1 = std::clamp(y1, 0, res.rows - 1);
-
-x0 -= w / 2;
-y0 -= h / 2;
-x1 -= w / 2;
-y1 -= h / 2;
-
-x0 = std::clamp(x0, 0, res.cols - 1);
-y0 = std::clamp(y0, 0, res.rows - 1);
-x1 = std::clamp(x1, 0, res.cols);
-y1 = std::clamp(y1, 0, res.rows);
-
-if (x1 <= x0 || y1 <= y0)
-  return; // IMPORTANT
-
-cv::Rect roi(x0, y0, x1 - x0, y1 - y0);
-res(roi).copyTo(masked(roi));
-res = masked;
-
-//
-
-//
-
-//
-//
-//
-//
-
-cv::Point c = grid_centers_[0];
-float square_height = center_square_infos_.first[0];
-float square_length = center_square_infos_.first[1];
-
-// Calculate ROI in IMAGE coordinates
-int img_x0 = std::max(0, (int)(c.x - square_length / 2));
-int img_y0 = std::max(0, (int)(c.y - square_height / 2));
-int img_x1 = std::min(processed_image.cols, (int)(c.x + square_length / 2));
-int img_y1 = std::min(processed_image.rows, (int)(c.y + square_height / 2));
-
-// Convert to RES coordinates (result is (img.size - template.size + 1))
-int res_x0 = std::max(0, img_x0);
-int res_y0 = std::max(0, img_y0);
-int res_x1 = std::min(res.cols, img_x1 - w + 1);
-int res_y1 = std::min(res.rows, img_y1 - h + 1);
+print_grid_lines(clusterized_h_lines, clusterized_v_lines, immage);
+std::vector<std::vector<float>> ret = {clusterized_h_lines,
+                                       clusterized_v_lines};
+return ret;
