@@ -20,6 +20,7 @@ const std::vector<std::string> shape_names = {"circle", "cross", "grid"};
 class PiperMoveOrders : public rclcpp::Node {
 public:
   PiperMoveOrders() : Node("piper_move_orders") {
+    // piper orders
     order_publisher_ = this->create_publisher<std_msgs::msg::Int32MultiArray>(
         "/piper_move_order", 1);
     order_response_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
@@ -27,8 +28,16 @@ public:
         std::bind(&PiperMoveOrders::order_response_subscriber_callback, this,
                   _1));
 
+    // perception orders / feedback
+    camera_order_publisher_ =
+        this->create_publisher<std_msgs::msg::Bool>("/take_pic_order", 10);
+    min_max_tictactoe_subscriber_ =
+        this->create_subscription<std_msgs::msg::Int32MultiArray>(
+            "/min_max_move_picker", 10,
+            std::bind(&PiperMoveOrders::min_max_tictactoe_subscriber_callback,
+                      this, _1));
+    // first piper order
     current_order_ = std::make_shared<std_msgs::msg::Int32MultiArray>();
-    current_order_->data = {4, 2};
   }
 
   void
@@ -57,12 +66,24 @@ public:
     }
   }
 
+  void min_max_tictactoe_subscriber_callback(
+      const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
+    // get the best move from MinMax TicTacToe
+    current_order_->data = msg->data;
+    order_publisher_->publish(*current_order_);
+  }
+
 private:
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr order_publisher_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr
       order_response_subscriber_;
   std_msgs::msg::Int32MultiArray::SharedPtr current_order_;
   std::string current_spawn_order_;
+  // perception + MinMax treatment
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr camera_order_publisher_;
+  std_msgs::msg::Int32MultiArray current_game_board_squares_;
+  rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
+      min_max_tictactoe_subscriber_;
 };
 
 int main(int argc, char **argv) {

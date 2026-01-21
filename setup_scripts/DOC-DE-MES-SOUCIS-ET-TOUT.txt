@@ -5,3 +5,29 @@ line etait pas entre genre 50 et 200 a cote dune autre ba tu pouvait la jerter
 https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invariant-circle-detection-with-opencv-based-on  
 => And tried MSER  (blob reco approach)  AND IT WORKED HELLLLA GOOD AND Actually detected both cross and circle centers
 - Then I needed to separate Cross from circle.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+- POUR LA DETECTION DES LIGNES CETAIT CA SON WORKFLOW:
+Compact summary:
+1. ROI mask - only detect lines in center 70% of image
+2. Intersection-based - find where horizontal/vertical lines cross (not just individual lines)
+3. Cluster intersections - merge nearby intersection points
+4. Extract line positions - get unique h/v coordinates from intersections
+5. Score pairs - prefer line pairs with reasonable spacing (80-300px) that are near image center
+6. Pick best - return highest-scoring pair instead of just first 2
+Key change: From "detect lines → cluster" to "detect lines → find intersections → cluster intersections → score geometry". More robust to noise.

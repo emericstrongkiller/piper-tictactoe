@@ -63,13 +63,24 @@ ament_target_dependencies(take_pic
     rclcpp
 	sensor_msgs
 	cv_bridge
-	OpenCV)
+	OpenCV
+	std_msgs)
+
+add_executable(min_max_TicTacToe
+    src/min_max_TicTacToe.cpp)
+target_include_directories(min_max_TicTacToe
+    PUBLIC include)
+ament_target_dependencies(min_max_TicTacToe
+    ament_cmake
+    rclcpp
+	std_msgs)
 
 # Install the executable
 install(TARGETS 
 	X_draw_trajectory
 	piper_move_orders
 	take_pic
+	min_max_TicTacToe
     DESTINATION lib/${PROJECT_NAME}
 )
 

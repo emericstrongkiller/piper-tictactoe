@@ -1,8 +1,12 @@
 #include "rclcpp/logging.hpp"
+#include "rclcpp/subscription.hpp"
+#include "std_msgs/msg/detail/int32_multi_array__struct.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstddef>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/int32_multi_array.hpp>
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/imgcodecs.hpp>
@@ -22,26 +26,42 @@ public:
         "/camera1/image_raw", 10,
         std::bind(&CameraSubscriber::listener_callback, this,
                   std::placeholders::_1));
+    order_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
+        "/take_pic_order", 10,
+        std::bind(&CameraSubscriber::order_subscriber_callback, this,
+                  std::placeholders::_1));
+
+    order_response_publisher_ =
+        this->create_publisher<std_msgs::msg::Int32MultiArray>(
+            "/take_pic_order_response", 10);
   }
 
 private:
+  void order_subscriber_callback(const std_msgs::msg::Bool::SharedPtr msg) {
+    RCLCPP_INFO(this->get_logger(),
+                "Receiving take Pic order. About to perceive game Grid..");
+    order_done_ = !(msg->data);
+  }
+
   void listener_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
-    RCLCPP_INFO(this->get_logger(), "Receiving image");
+    // Analyse + output grid state
+    if (!order_done_) {
+      RCLCPP_INFO(this->get_logger(), "Receiving image");
 
-    cv_bridge::CvImageConstPtr cv_ptr;
-    try {
-      cv_ptr = cv_bridge::toCvShare(msg, "bgr8");
-    } catch (const cv_bridge::Exception &e) {
-      RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
-      return;
+      cv_bridge::CvImageConstPtr cv_ptr;
+      try {
+        cv_ptr = cv_bridge::toCvShare(msg, "bgr8");
+      } catch (const cv_bridge::Exception &e) {
+        RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+        return;
+      }
+
+      current_game_board_ = percieve_game_board(cv_ptr->image);
+      save_image(current_game_board_.first, "captured_image.jpg");
+      current_game_board_squares_.data = current_game_board_.second;
+      order_response_publisher_->publish(current_game_board_squares_);
+      order_done_ = true;
     }
-
-    // Now lets do some image processing !
-    current_game_board_ = percieve_game_board(cv_ptr->image);
-
-    save_image(current_game_board_.first, "captured_image.jpg");
-
-    rclcpp::shutdown();
   }
 
   std::pair<cv::Mat, std::vector<int>> percieve_game_board(cv::Mat image) {
@@ -482,10 +502,16 @@ private:
   }
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr order_subscriber_;
+  rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr
+      order_response_publisher_;
+
   // Image variables
   std::pair<cv::Mat, std::vector<int>> current_game_board_;
   std::vector<cv::Point> grid_centers_;
   std::pair<std::array<float, 2>, cv::Point> center_square_infos_;
+  std_msgs::msg::Int32MultiArray current_game_board_squares_;
+  bool order_done_;
 };
 
 int main(int argc, char **argv) {
