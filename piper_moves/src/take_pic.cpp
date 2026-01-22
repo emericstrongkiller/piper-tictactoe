@@ -481,7 +481,7 @@ private:
 
     if (res.size.dims() > 0) {
       // Threshold
-      const double threshold = 0.32;
+      const double threshold = 0.34;
 
       // Find all locations with score >= threshold
       for (int y = 0; y < res.rows; ++y) {

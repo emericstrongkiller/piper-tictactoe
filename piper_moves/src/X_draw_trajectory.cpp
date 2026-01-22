@@ -167,8 +167,6 @@ public:
           rt.getRobotTrajectoryMsg(cartesian_trajectory_plan_);
           piper_interface_->execute(cartesian_trajectory_plan_);
           RCLCPP_INFO(logger_, "Successfully executed the order!");
-          current_order_response_.data = true;
-          piper_orders_response_publisher_->publish(current_order_response_);
         } else {
           RCLCPP_ERROR(logger_, "Execution failed, TOTG problem!");
         }
@@ -176,6 +174,21 @@ public:
         draw_title_("Planning-Failed!");
         moveit_visual_tools_->trigger();
         RCLCPP_ERROR(logger_, "Planning failed!");
+      }
+
+      // Come back to retract-pose !
+      prompt_(
+          "Press 'Next' in the RvizVisualToolsGui to go to the RETRACT Pose");
+      draw_title_("pre-pose-AGAIN");
+      moveit_visual_tools_->trigger();
+      // check piper current_order_ and go to this pos before all
+      if (current_order_[0] >= 0 && current_order_[0] < 10) {
+        setup_goal_pose_target(0.212, -0.108, 0.214, 0.000034, 1.000000,
+                               -0.000004, 0.000027);
+        piper_interface_->plan(simple_plan_);
+        piper_interface_->execute(simple_plan_);
+        current_order_response_.data = true;
+        piper_orders_response_publisher_->publish(current_order_response_);
       }
     }
   }

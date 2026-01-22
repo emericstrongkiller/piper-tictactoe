@@ -11,6 +11,13 @@ https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invari
 
 
 
+- SO AS I WAS SAYING, The SIMULATION WAS WACKKKK WORKING because of my vision pipeline, SPECIFICALLY the shape detection, i.e template matching is dogshit as i saw on reddit,
+  so even though i had not tried everything with it, tweak parameters for hours and so forth, this reddit comment got me thinking : "Useless to try to make this work if my goal is 
+  real conditions you know.."
+  => THUS i finished the pipeline, perception->minmax->move_orderer and moved on to the real robot for:
+    * work directly on real conditions for perception
+    * position/shape settings for real robot
+    * Work in parallel on the web-Interface during wait-time for real-robot testing.
 
 
 
@@ -18,8 +25,7 @@ https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invari
 
 
 
-
-
+3618 3620 3622 3646 3647 3658 3624 3832 4123 4139 4354 4364
 
 
 - POUR LA DETECTION DES LIGNES CETAIT CA SON WORKFLOW:

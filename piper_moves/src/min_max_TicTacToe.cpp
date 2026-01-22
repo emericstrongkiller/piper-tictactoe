@@ -1,6 +1,8 @@
 #include "rclcpp/executors.hpp"
 #include "rclcpp/logging.hpp"
+#include "rclcpp/publisher.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/detail/int32_multi_array__struct.hpp"
 #include "std_msgs/msg/int32_multi_array.hpp"
 
 #include <algorithm>
@@ -8,14 +10,6 @@
 #include <limits>
 #include <memory>
 #include <vector>
-
-// use MinMax on every blank board place => retain the place that has the best
-// score
-
-// Convert this position back to a Int32MultiArray format for the game grid has
-// 1 dimension
-
-// output this position to the take_pic_node
 
 using namespace std::placeholders;
 
@@ -28,18 +22,12 @@ public:
             std::bind(&MinMaxTicTacToe::game_status_subscriber_callback_, this,
                       _1));
 
+    best_move_publisher_ =
+        this->create_publisher<std_msgs::msg::Int32MultiArray>(
+            "/best_move_min_max", 10);
+
     // variables init
     current_game_board_2D_.resize(3, std::vector<int>(3, 0));
-    current_game_board_1D_ = std::make_shared<std_msgs::msg::Int32MultiArray>();
-    current_game_board_1D_->data = {2, 1, 1, 2, 0, 0, 1, 0, 0};
-
-    // create + print board matrix
-    game_status_subscriber_callback_(current_game_board_1D_);
-
-    // get best move for the 0 player
-    best_move_ = find_best_move();
-    RCLCPP_INFO(this->get_logger(), "best_move: {%d,%d}", best_move_[0],
-                best_move_[1]);
   }
 
 private:
@@ -53,6 +41,20 @@ private:
     RCLCPP_INFO(this->get_logger(),
                 "Just received current game board's state:");
     print_game_board_2D();
+
+    // get best move for the 0 player
+    best_move_ = find_best_move();
+    RCLCPP_INFO(this->get_logger(), "ORIGINAL best_move: {%d,%d}",
+                best_move_.data[0], best_move_.data[1]);
+
+    // publish best move WITH Current board vector
+    for (size_t i = 0; i < msg->data.size(); i++) {
+      best_move_.data.push_back(msg->data[i]);
+    }
+    std_msgs::msg::Int32MultiArray best = translate_to_flat_circle(best_move_);
+    RCLCPP_INFO(this->get_logger(), "best_move: {%d,%d}", best.data[0],
+                best.data[1]);
+    best_move_publisher_->publish(best);
   }
 
   void print_game_board_2D() {
@@ -66,10 +68,12 @@ private:
 
   bool check_full_board() {
     bool is_full = true;
-    for (auto &el : current_game_board_1D_->data) {
-      if (static_cast<int>(el) == 0) {
-        is_full = false;
-        break;
+    for (size_t i = 0; i < current_game_board_2D_.size(); i++) {
+      for (size_t j = 0; j < current_game_board_2D_[0].size(); j++) {
+        if (current_game_board_2D_[i][j] == 0) {
+          is_full = false;
+          break;
+        }
       }
     }
     return is_full;
@@ -105,9 +109,8 @@ private:
     return 0;
   }
 
-  std::vector<int> find_best_move() {
+  std_msgs::msg::Int32MultiArray find_best_move() {
     int best_score = -100;
-    std::vector<int> best_move = {0, 0};
 
     // apply min_max algo on each free grid square
     for (size_t i = 0; i < current_game_board_2D_.size(); i++) {
@@ -118,12 +121,12 @@ private:
           current_game_board_2D_[i][j] = 0;
           if (score > best_score) {
             best_score = score;
-            best_move = {static_cast<int>(i), static_cast<int>(j)};
+            best_move_.data = {static_cast<int>(i), static_cast<int>(j)};
           }
         }
       }
     }
-    return best_move;
+    return best_move_;
   }
 
   int min_max(int depth, bool is_maximizing) {
@@ -172,13 +175,30 @@ private:
     }
   }
 
+  std_msgs::msg::Int32MultiArray
+  translate_to_flat_circle(std_msgs::msg::Int32MultiArray best_move) {
+    std_msgs::msg::Int32MultiArray ret;
+    // add the position converted to a 1D array you know
+    ret.data.push_back(best_move.data[0] * 3 + best_move.data[1]);
+    // and say you want  to put a circle (the robot puts circle)
+    ret.data.push_back(0);
+
+    // then add current_board square infos
+    for (size_t i = 2; i < best_move_.data.size(); i++) {
+      ret.data.push_back(best_move_.data[i]);
+    }
+
+    return ret;
+  }
+
   // Sub & Pub
   rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
       game_status_subscriber_;
+  rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr
+      best_move_publisher_;
   // Variables
   std::vector<std::vector<int>> current_game_board_2D_;
-  std_msgs::msg::Int32MultiArray::SharedPtr current_game_board_1D_;
-  std::vector<int> best_move_;
+  std_msgs::msg::Int32MultiArray best_move_;
 };
 
 int main(int argc, char **argv) {
