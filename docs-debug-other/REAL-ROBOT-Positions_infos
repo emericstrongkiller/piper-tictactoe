@@ -1,0 +1,19 @@
+/*
+Position Z-DOWN
+[X_draw_trajectory-1] piper_x: 0.056142
+[X_draw_trajectory-1] piper_y: -0.000000
+[X_draw_trajectory-1] piper_z: 0.213193
+[X_draw_trajectory-1] piper_ori_x: 0.000002
+[X_draw_trajectory-1] piper_ori_y: 0.675613
+[X_draw_trajectory-1] piper_ori_z: -0.000005
+[X_draw_trajectory-1] piper_ori_w: 0.737256
+
+Position Z-un-peu-DOWN
+[X_draw_trajectory-1] piper_x: 0.220781
+[X_draw_trajectory-1] piper_y: 0.032015
+[X_draw_trajectory-1] piper_z: 0.200174
+[X_draw_trajectory-1] piper_ori_x: 0.001474
+[X_draw_trajectory-1] piper_ori_y: 0.999998
+[X_draw_trajectory-1] piper_ori_z: -0.001085
+[X_draw_trajectory-1] piper_ori_w: 0.001014
+*/

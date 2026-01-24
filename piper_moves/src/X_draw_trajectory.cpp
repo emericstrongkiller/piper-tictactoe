@@ -25,10 +25,18 @@ using MoveGroupInterface = moveit::planning_interface::MoveGroupInterface;
 using namespace std::placeholders;
 
 const std::vector<std::vector<float>> grid_positions = {
-    {0.245, 0.065, 0.213},  {0.20, 0.065, 0.213},  {0.155, 0.065, 0.213},
-    {0.245, 0.020, 0.213},  {0.20, 0.020, 0.213},  {0.155, 0.020, 0.213},
-    {0.245, -0.025, 0.213}, {0.20, -0.025, 0.213}, {0.155, -0.025, 0.213},
+    {0.245 + 0.025, 0.065, 0.213},  {0.20 + 0.025, 0.065, 0.213},
+    {0.155 + 0.025, 0.065, 0.213},  {0.245 + 0.025, 0.020, 0.213},
+    {0.20 + 0.025, 0.020, 0.213},   {0.155 + 0.025, 0.020, 0.213},
+    {0.245 + 0.025, -0.025, 0.213}, {0.20 + 0.025, -0.025, 0.213},
+    {0.155 + 0.025, -0.025, 0.213},
 };
+
+// const std::vector<std::vector<float>> grid_positions = {
+//     {0.245, 0.065, 0.213},  {0.20, 0.065, 0.213},  {0.155, 0.065, 0.213},
+//     {0.245, 0.020, 0.213},  {0.20, 0.020, 0.213},  {0.155, 0.020, 0.213},
+//     {0.245, -0.025, 0.213}, {0.20, -0.025, 0.213}, {0.155, -0.025, 0.213},
+// };
 
 class PiperTrajectory {
 public:
@@ -42,10 +50,16 @@ public:
         rclcpp::NodeOptions().automatically_declare_parameters_from_overrides(
             true));
     // piper_orders subscriber
+    // Create reentrant callback group
+    auto callback_group =
+        node_->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    auto sub_options = rclcpp::SubscriptionOptions();
+    sub_options.callback_group = callback_group;
     piper_orders_subscriber_ =
         node_->create_subscription<std_msgs::msg::Int32MultiArray>(
             "/piper_move_orders", 10,
-            std::bind(&PiperTrajectory::piper_orders_callback, this, _1));
+            std::bind(&PiperTrajectory::piper_orders_callback, this, _1),
+            sub_options);
     piper_orders_response_publisher_ =
         node_->create_publisher<std_msgs::msg::Bool>(
             "/piper_move_orders_response_", 10);
@@ -58,6 +72,9 @@ public:
     // move_group interface
     piper_interface_ = std::make_shared<MoveGroupInterface>(node_, "arm");
     piper_interface_->setEndEffectorLink("link6");
+    // Slow Piper downnn
+    piper_interface_->setMaxVelocityScalingFactor(0.05);
+    piper_interface_->setMaxAccelerationScalingFactor(0.10);
 
     // Construct and initialize MoveItVisualTools
     moveit_visual_tools_ =
@@ -90,41 +107,72 @@ public:
   }
 
   void target_plan() {
-    for (int i = 0; i < 10; i++) {
-      // get piper Pose
-      piper_curr_pos_ = piper_interface_->getCurrentPose();
-      RCLCPP_INFO(logger_, "got EndEffector: %s",
-                  piper_interface_->getEndEffectorLink().c_str());
-      RCLCPP_INFO(
-          logger_,
-          "got piper Pose: \npiper_x: %f \npiper_y: %f \npiper_z: %f "
-          "\npiper_ori_x: %f \npiper_ori_y: %f \npiper_ori_z: %f "
-          "\npiper_ori_w: %f",
-          piper_curr_pos_.pose.position.x, piper_curr_pos_.pose.position.y,
-          piper_curr_pos_.pose.position.z, piper_curr_pos_.pose.orientation.x,
-          piper_curr_pos_.pose.orientation.y,
-          piper_curr_pos_.pose.orientation.z,
-          piper_curr_pos_.pose.orientation.w);
+    // get piper Pose
+    piper_curr_pos_ = piper_interface_->getCurrentPose();
+    RCLCPP_INFO(logger_, "got EndEffector: %s",
+                piper_interface_->getEndEffectorLink().c_str());
+    RCLCPP_INFO(
+        logger_,
+        "got piper Pose: \npiper_x: %f \npiper_y: %f \npiper_z: %f "
+        "\npiper_ori_x: %f \npiper_ori_y: %f \npiper_ori_z: %f "
+        "\npiper_ori_w: %f",
+        piper_curr_pos_.pose.position.x, piper_curr_pos_.pose.position.y,
+        piper_curr_pos_.pose.position.z, piper_curr_pos_.pose.orientation.x,
+        piper_curr_pos_.pose.orientation.y, piper_curr_pos_.pose.orientation.z,
+        piper_curr_pos_.pose.orientation.w);
 
-      // pre-pose plan + execution
-      prompt_("Press 'Next' in the RvizVisualToolsGui to go to the ordered "
-              "pre-position (if any published in /piper_move_orders)");
+    // pre-pose plan + execution
+    // prompt_("Press 'Next' in the RvizVisualToolsGui to go to the ordered "
+    //        "pre-position (if any published in /piper_move_orders)");
+    // check piper current_order_ and go to this pos before all
+    if (current_order_[0] >= 0 && current_order_[0] < 10) {
       draw_title_("pre-pose");
       moveit_visual_tools_->trigger();
-      // check piper current_order_ and go to this pos before all
-      if (current_order_[0] >= 0 && current_order_[0] < 10) {
-        int position_index = current_order_[0];
-        setup_goal_pose_target(
-            static_cast<float>(grid_positions[position_index][0]),
-            static_cast<float>(grid_positions[position_index][1]),
-            static_cast<float>(grid_positions[position_index][2]), 0.000034,
-            1.000000, -0.000004, 0.000027);
-        piper_interface_->plan(simple_plan_);
-        piper_interface_->execute(simple_plan_);
-      }
+      int position_index = current_order_[0];
+      setup_goal_pose_target(
+          static_cast<float>(grid_positions[position_index][0]),
+          static_cast<float>(grid_positions[position_index][1]),
+          static_cast<float>(grid_positions[position_index][2]), 0.000034,
+          1.000000, -0.000004, 0.000027);
+      piper_interface_->plan(simple_plan_);
+      // prompt_("Now next to execute!");
+      piper_interface_->execute(simple_plan_);
+    }
+    // go to clear pos UP for order = 10
+    else if (current_order_[0] == 10) {
+      draw_title_("clear-pos0");
+      moveit_visual_tools_->trigger();
+      setup_goal_pose_target(0.226358, -0.111523, 0.211479, -0.000396, 1.000000,
+                             0.000314, 0.000393);
+      piper_interface_->plan(simple_plan_);
+      // prompt_("Now next to execute!");
+      piper_interface_->execute(simple_plan_);
+    }
+    // go to clear pos DOWN for order = 11
+    else if (current_order_[0] == 11) {
+      draw_title_("clear-pos1");
+      moveit_visual_tools_->trigger();
+      setup_goal_pose_target(0.226358, -0.111472, 0.204557, -0.000438, 1.000000,
+                             0.000647, -0.000225);
+      piper_interface_->plan(simple_plan_);
+      // prompt_("Now next to execute!");
+      piper_interface_->execute(simple_plan_);
+    }
+    // go to zero pos for order = 12
+    else if (current_order_[0] == 12) {
+      draw_title_("zero-pos");
+      moveit_visual_tools_->trigger();
+      setup_goal_pose_target(0.056145, 0.000001, 0.213190, -0.000008, 0.675593,
+                             -0.000007, 0.737275);
+      piper_interface_->plan(simple_plan_);
+      // prompt_("Now next to execute!");
+      piper_interface_->execute(simple_plan_);
+    }
 
+    // if there is a shape in the current_order, draw it and retract
+    if (current_order_.size() > 1) {
       // create plan
-      prompt_("Press 'Next' in the RvizVisualToolsGui window to plan");
+      // prompt_("Press 'Next' in the RvizVisualToolsGui window to plan");
       draw_title_("Planning");
       moveit_visual_tools_->trigger();
       if (current_order_[1] == 0) {
@@ -147,7 +195,8 @@ public:
         moveit_visual_tools_->trigger();
         RCLCPP_INFO(logger_, "Valid Trajectory! Percent Valid: %f",
                     plan_fraction_robot_);
-        prompt_("Press 'Next' in the RvizVisualToolsGui window to execute");
+        prompt_("Press 'Next' to execute WHEN YOU ARE SURE The plan is safe "
+                "for the real Environment");
         draw_title_("Executing");
         moveit_visual_tools_->trigger();
         // TOTG PART
@@ -160,8 +209,8 @@ public:
         // Time-parameterize with velocity/accel limits
         trajectory_processing::TimeOptimalTrajectoryGeneration totg;
         bool success = totg.computeTimeStamps(rt,
-                                              0.05, // vel scale
-                                              0.05  // accel scale
+                                              0.04, // vel scale
+                                              0.01  // accel scale
         );
         if (success) {
           rt.getRobotTrajectoryMsg(cartesian_trajectory_plan_);
@@ -177,8 +226,8 @@ public:
       }
 
       // Come back to retract-pose !
-      prompt_(
-          "Press 'Next' in the RvizVisualToolsGui to go to the RETRACT Pose");
+      // prompt_(
+      //    "Press 'Next' in the RvizVisualToolsGui to go to the RETRACT Pose");
       draw_title_("pre-pose-AGAIN");
       moveit_visual_tools_->trigger();
       // check piper current_order_ and go to this pos before all
@@ -194,7 +243,7 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_circle_pose_targets(double retract_amount = 0.01,
+  generate_circle_pose_targets(double retract_amount = 0.013,
                                double radius = 0.015,
                                double nb_waypoints = 200) {
     std::vector<geometry_msgs::msg::Pose> targets;
@@ -234,7 +283,7 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_cross_pose_targets(double retract_amount = 0.01,
+  generate_cross_pose_targets(double retract_amount = 0.013,
                               double square_size = 0.03) {
     std::vector<geometry_msgs::msg::Pose> targets;
     piper_curr_pos_ = piper_interface_->getCurrentPose();
@@ -289,7 +338,7 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_grid_pose_targets(double retract_amount = 0.01,
+  generate_grid_pose_targets(double retract_amount = 0.013,
                              double grid_size = 0.12) {
     std::vector<geometry_msgs::msg::Pose> targets;
     piper_curr_pos_ = piper_interface_->getCurrentPose();
@@ -390,10 +439,14 @@ public:
 
   void
   piper_orders_callback(const std_msgs::msg::Int32MultiArray::SharedPtr order) {
-    RCLCPP_INFO(logger_, "Received order!: [%d, %d]", order->data[0],
-                order->data[1]);
-    current_order_[0] = order->data[0];
-    current_order_[1] = order->data[1];
+    RCLCPP_INFO(logger_, "Received order!");
+    current_order_.clear();
+    for (size_t i = 0; i < order->data.size(); i++) {
+      RCLCPP_INFO(logger_, "-> %d", order->data[i]);
+      current_order_.push_back(order->data[i]);
+    }
+    // execute order 66
+    target_plan();
   }
 
   // getters
@@ -425,7 +478,7 @@ private:
       draw_trajectory_tool_path_;
   std::shared_ptr<moveit_visual_tools::MoveItVisualTools> moveit_visual_tools_;
   // piper orders
-  std::array<int32_t, 2> current_order_;
+  std::vector<int> current_order_;
   MoveGroupInterface::Plan simple_plan_;
   std_msgs::msg::Bool current_order_response_;
 };
@@ -433,8 +486,7 @@ private:
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
   auto piper_moves = std::make_shared<PiperTrajectory>();
-  piper_moves->target_plan();
-  rclcpp::shutdown();
   piper_moves->spinner().join();
+  rclcpp::shutdown();
   return 0;
 }

@@ -22,10 +22,14 @@
 class CameraSubscriber : public rclcpp::Node {
 public:
   CameraSubscriber() : Node("camera_subscriber") {
+    // camera topic parameter
+    this->declare_parameter<std::string>("camera_topic", "/camera1/image_raw");
+    std::string camera_topic = this->get_parameter("camera_topic").as_string();
     subscription_ = this->create_subscription<sensor_msgs::msg::Image>(
-        "/camera1/image_raw", 10,
+        camera_topic, 10,
         std::bind(&CameraSubscriber::listener_callback, this,
                   std::placeholders::_1));
+
     order_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
         "/take_pic_order", 10,
         std::bind(&CameraSubscriber::order_subscriber_callback, this,
@@ -73,15 +77,24 @@ private:
     cv::medianBlur(processed_image, processed_image, 11);
     cv::Canny(processed_image, processed_image, 100, 300, 3);
 
+    /*
+
     std::vector<std::vector<float>> grid_lines =
         detect_grid_lines(processed_image);
-
     std::vector<float> grid_h = grid_lines[0];
     std::vector<float> grid_v = grid_lines[1];
+
+    // check to avoid segmentation fault down the llline
+    if (grid_h.empty() || grid_v.empty()) {
+      RCLCPP_ERROR(this->get_logger(), "Grid detection failed");
+      return {cv::Mat(), std::vector<int>(9, 0)};
+    }
 
     // detect and draw grid square centers
     center_square_infos_ = calculate_center_square_infos(grid_v, grid_h);
     grid_centers_ = calculate_all_grid_centers(center_square_infos_);
+
+
 
     // shape detection
     cv::Mat mser_image;
@@ -129,12 +142,14 @@ private:
     }
 
     // image printings part
-    print_grid_lines(grid_h, grid_v, image);
-    print_grid_contours(image);
-    print_grid_centers(grid_centers_, image);
-    print_detected_shapes(detected_shapes, image);
+     print_grid_lines(grid_h, grid_v, image);
+     print_grid_contours(image);
+     print_grid_centers(grid_centers_, image);
+     print_detected_shapes(detected_shapes, image);
 
-    return std::pair<cv::Mat, std::vector<int>>(image, game_board_grid_state);
+    */
+    return std::pair<cv::Mat, std::vector<int>>(processed_image,
+                                                game_board_grid_state);
   }
 
   void save_image(cv::Mat image, std::string file_name) {
