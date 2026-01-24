@@ -1,6 +1,0 @@
-- FOR TODAY :
-
-- Make the take_pic node output a second position on the grid that is random non-occupied position
-  and the piper_move_order node just has to spawn a shape in this position after it is done with the robot
-  THEN it sends the finished flag to take pic node to enable him to perceive the board and shit
-- Before test, add a retract position for the PiperBot  that it has to execute after each play (probably add this in the X_draw_trajectory_node).

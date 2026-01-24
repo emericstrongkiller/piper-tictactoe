@@ -20,7 +20,7 @@ https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invari
     * Work in parallel on the web-Interface during wait-time for real-robot testing.
 
 
-
+- I WOULD HAVE DONE THE SCRUCTURE FIRST LIKE THE NODE STRUCT FIRST THEN MOVE ON TO CODING YOU KNOW, BECAUSE I WOULD HAVE AVOIDED DATA PASSING FROM ONE PLACE BACK TO ANOTHER AND UNCLEANLINESS
 
 
 
