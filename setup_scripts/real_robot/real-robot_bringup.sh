@@ -14,3 +14,7 @@ ros2 run tf2_ros static_transform_publisher \
 # then Zenoh (Although it seems to work without it in rviz ?..)
 cd ~/ros2_ws/src/zenoh-pointcloud/init
 ./zenoh_pointcloud_rosject.sh &
+
+# Then the X_trajectory node (the rest will follow afterwards)
+ros2 launch piper_moves joint_space_trajectory.launch.py &
+

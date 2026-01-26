@@ -1,11 +1,15 @@
 #include "rclcpp/logging.hpp"
+#include "rclcpp/publisher.hpp"
 #include "rclcpp/subscription.hpp"
+#include "sensor_msgs/msg/detail/image__struct.hpp"
+#include "std_msgs/msg/detail/int32__struct.hpp"
 #include "std_msgs/msg/detail/int32_multi_array__struct.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstddef>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <std_msgs/msg/int32_multi_array.hpp>
 
 #include <cv_bridge/cv_bridge.h>
@@ -19,25 +23,59 @@
 #include <string>
 #include <vector>
 
+const double TABLET_CONTOUR_AREA_INTERVAL[2] = {25000, 30000};
+
 class CameraSubscriber : public rclcpp::Node {
 public:
   CameraSubscriber() : Node("camera_subscriber") {
     // camera topic parameter
-    this->declare_parameter<std::string>("camera_topic", "/camera1/image_raw");
+    this->declare_parameter<std::string>("camera_topic",
+                                         "/camera/D435/color/image_raw");
     std::string camera_topic = this->get_parameter("camera_topic").as_string();
+
+    // Reentrant callback group
+    auto callback_group =
+        this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    auto sub_options = rclcpp::SubscriptionOptions();
+    sub_options.callback_group = callback_group;
+
+    // subscribers
     subscription_ = this->create_subscription<sensor_msgs::msg::Image>(
         camera_topic, 10,
         std::bind(&CameraSubscriber::listener_callback, this,
-                  std::placeholders::_1));
-
+                  std::placeholders::_1),
+        sub_options);
     order_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
         "/take_pic_order", 10,
         std::bind(&CameraSubscriber::order_subscriber_callback, this,
-                  std::placeholders::_1));
+                  std::placeholders::_1),
+        sub_options);
+    perception_parameter_subscriber_ =
+        this->create_subscription<std_msgs::msg::Int32>(
+            "/perception_param", 10,
+            std::bind(
+                &CameraSubscriber::perception_parameter_subscriber_callback,
+                this, std::placeholders::_1),
+            sub_options);
 
+    // publishers
     order_response_publisher_ =
         this->create_publisher<std_msgs::msg::Int32MultiArray>(
             "/take_pic_order_response", 10);
+    video_server_publisher_ = this->create_publisher<sensor_msgs::msg::Image>(
+        "/perception_server", 10);
+    cvtColor_server_publisher_ =
+        this->create_publisher<sensor_msgs::msg::Image>(
+            "/cvtColor_perception_server", 10);
+    no_shadow_server_publisher_ =
+        this->create_publisher<sensor_msgs::msg::Image>(
+            "/no_shadow_perception_server", 10);
+    binary_image_server_publisher_ =
+        this->create_publisher<sensor_msgs::msg::Image>(
+            "/binary_image_perception_server", 10);
+
+    // variables init
+    perception_param_.data = 25;
   }
 
 private:
@@ -47,24 +85,35 @@ private:
     order_done_ = !(msg->data);
   }
 
+  void perception_parameter_subscriber_callback(
+      const std_msgs::msg::Int32::SharedPtr msg) {
+    perception_param_.data = msg->data;
+    RCLCPP_DEBUG(this->get_logger(), "perception_param_ is now: %d",
+                 static_cast<int>(perception_param_.data));
+  }
+
   void listener_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
     // Analyse + output grid state
     if (!order_done_) {
       RCLCPP_INFO(this->get_logger(), "Receiving image");
 
-      cv_bridge::CvImageConstPtr cv_ptr;
       try {
-        cv_ptr = cv_bridge::toCvShare(msg, "bgr8");
+        cv_ptr_ = cv_bridge::toCvCopy(msg, "bgr8");
       } catch (const cv_bridge::Exception &e) {
         RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
         return;
       }
 
-      current_game_board_ = percieve_game_board(cv_ptr->image);
-      save_image(current_game_board_.first, "captured_image.jpg");
-      current_game_board_squares_.data = current_game_board_.second;
-      order_response_publisher_->publish(current_game_board_squares_);
-      order_done_ = true;
+      cv_ptr_->encoding = "bgr8";
+
+      current_game_board_ = percieve_game_board(cv_ptr_->image);
+      // save_image(current_game_board_.first, "captured_image.jpg");
+      // current_game_board_squares_.data = current_game_board_.second;
+      // order_response_publisher_->publish(current_game_board_squares_);
+      cv_ptr_->image = current_game_board_.first;
+      cv_ptr_->encoding = "bgr8";
+      video_server_publisher_->publish(*cv_ptr_->toImageMsg());
+      // order_done_ = true;
     }
   }
 
@@ -72,10 +121,127 @@ private:
     cv::Mat processed_image;
     std::vector<int> game_board_grid_state(9, 0); // start grid with no shape
 
-    // Processing image
+    // gray image
     cv::cvtColor(image, processed_image, cv::COLOR_BGR2GRAY);
-    cv::medianBlur(processed_image, processed_image, 11);
-    cv::Canny(processed_image, processed_image, 100, 300, 3);
+    cv_ptr_->image = processed_image;
+    cv_ptr_->encoding = "mono8";
+    cvtColor_server_publisher_->publish(*cv_ptr_->toImageMsg());
+
+    // shadow removal
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+    cv::Mat background;
+    cv::morphologyEx(processed_image, background, cv::MORPH_DILATE, kernel);
+    cv::Mat shadow_removed;
+    cv::subtract(background, processed_image, shadow_removed);
+    cv_ptr_->image = shadow_removed;
+    cv_ptr_->encoding = "mono8";
+    no_shadow_server_publisher_->publish(*cv_ptr_->toImageMsg());
+
+    // binary image
+    // perception_param_.data for threshold dddude
+    cv::threshold(shadow_removed, shadow_removed, 25, 255, 0);
+    // contours
+    std::vector<std::vector<cv::Point>> contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(shadow_removed, contours, hierarchy, cv::RETR_TREE,
+                     cv::CHAIN_APPROX_SIMPLE);
+    RCLCPP_DEBUG(this->get_logger(), "Found %zu contours", contours.size());
+    // find the tablet contour
+    double tablet_contour_index;
+    for (size_t i = 0; i < contours.size(); i++) {
+      if (cv::contourArea(contours[i]) > TABLET_CONTOUR_AREA_INTERVAL[0] &&
+          cv::contourArea(contours[i]) < TABLET_CONTOUR_AREA_INTERVAL[1]) {
+        tablet_contour_index = i;
+      }
+      RCLCPP_DEBUG(this->get_logger(), "contour[%zu].area: %f", i,
+                   cv::contourArea(contours[i]));
+    }
+    // find the two extremities of the tablet to crop the image accordingly
+    int x_start = 1000, y_start = 1000, x_end = 0, y_end = 0, width = 0,
+        height = 0;
+    for (size_t i = 0; i < contours[tablet_contour_index].size(); i++) {
+      if (contours[tablet_contour_index][i].x < x_start) {
+        x_start = contours[tablet_contour_index][i].x;
+      }
+      if (contours[tablet_contour_index][i].y < y_start) {
+        y_start = contours[tablet_contour_index][i].y;
+      }
+      if (contours[tablet_contour_index][i].x > x_end) {
+        x_end = contours[tablet_contour_index][i].x;
+      }
+      if (contours[tablet_contour_index][i].y > y_end) {
+        y_end = contours[tablet_contour_index][i].y;
+      }
+    }
+    width = x_end - x_start;
+    height = y_end - y_start;
+    RCLCPP_INFO(this->get_logger(),
+                "x_start: %d, y_start: %d, x_end: %d, y_end: %d", x_start,
+                y_start, x_end, y_end);
+
+    // find the actual two top corners of the tablet (since its warped, not a
+    // perfect rectangle so yeah)
+    int smallest_point_sum = 1000;
+    int top_left_x = 0, top_left_y = 0, top_right_x = 0, top_right_y = 0,
+        bottom_left_x = 0, bottom_left_y = 0;
+    for (size_t i = 0; i < contours[tablet_contour_index].size(); i++) {
+      if (contours[tablet_contour_index][i].x +
+              contours[tablet_contour_index][i].y <
+          smallest_point_sum) {
+        smallest_point_sum = contours[tablet_contour_index][i].x +
+                             contours[tablet_contour_index][i].y;
+        top_left_x = contours[tablet_contour_index][i].x;
+        top_left_y = contours[tablet_contour_index][i].y;
+      }
+    }
+    top_right_x = x_end - (top_left_x - x_start);
+    top_right_y = top_left_y;
+
+    bottom_left_x = x_start;
+    bottom_left_y = y_end;
+
+    RCLCPP_INFO(
+        this->get_logger(),
+        "top_left_x: %d, top_left_y: %d, top_right_x: %d, top_right_y: %d",
+        top_left_x, top_left_y, top_right_x, top_right_y);
+
+    // Perspective Transformation
+    cv::Mat warp_matrix;
+
+    std::vector<cv::Point2f> srcQuad(4), dstQuad(4);
+
+    srcQuad[0] = cv::Point2f(top_left_x, top_left_y);
+    srcQuad[1] = cv::Point2f(top_right_x, top_right_y);
+    srcQuad[2] = cv::Point2f(x_end, y_end);
+    srcQuad[3] = cv::Point2f(bottom_left_x, bottom_left_y);
+
+    dstQuad[0] = cv::Point2f(x_start + perception_param_.data, y_start);
+    dstQuad[1] = cv::Point2f(x_end - perception_param_.data, y_start);
+    dstQuad[2] = cv::Point2f(x_end, y_end);
+    dstQuad[3] = cv::Point2f(bottom_left_x, bottom_left_y);
+
+    warp_matrix = cv::getPerspectiveTransform(srcQuad, dstQuad);
+    cv::warpPerspective(image, image, warp_matrix, image.size());
+
+    //    cv::drawContours(image, contours, tablet_contour_index,
+    //                     cv::Scalar(0, 255, 0), 3);
+    cv_ptr_->image = shadow_removed;
+    cv_ptr_->encoding = "mono8";
+    binary_image_server_publisher_->publish(*cv_ptr_->toImageMsg());
+
+    // Crop the image using ROI
+    cv::Rect roi(x_start, y_start, width, height);
+    cv::Mat cropped_img = image(roi);
+    cv_ptr_->image = image;
+
+    // cv_ptr_->image = processed_image;
+    // cv_ptr_->encoding = "mono8";
+    // cvtColor_server_publisher_->publish(*cv_ptr_->toImageMsg());
+
+    // cv::medianBlur(processed_image, processed_image, 11);
+    // cv_ptr_->image = image;
+    // no_shadow_server_publisher_->publish(*cv_ptr_->toImageMsg());
+    // cv::Canny(processed_image, processed_image, 100, 300, 3);
 
     /*
 
@@ -125,7 +291,7 @@ private:
             detected_shapes[i].pt.x > (grid_centers_[j].x - 60) &&
             detected_shapes[i].pt.y < grid_centers_[j].y + 60 &&
             detected_shapes[i].pt.y > (grid_centers_[j].y - 60)) {
-          int shape_id = determine_shape(
+          int shape_id = determine_shape(2574 4051 4053 4110 4126 4111 4116
               match_image, cross_processed_templ, circle_processed_templ, image,
               cv::Point(detected_shapes[i].pt.x, detected_shapes[i].pt.y), i);
           game_board_grid_state[j] = shape_id;
@@ -148,7 +314,7 @@ private:
      print_detected_shapes(detected_shapes, image);
 
     */
-    return std::pair<cv::Mat, std::vector<int>>(processed_image,
+    return std::pair<cv::Mat, std::vector<int>>(cropped_img,
                                                 game_board_grid_state);
   }
 
@@ -520,18 +686,34 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr order_subscriber_;
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr
       order_response_publisher_;
+  // perception image servers
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr video_server_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      cvtColor_server_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      no_shadow_server_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      binary_image_server_publisher_;
+  // perception para subscriber
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr
+      perception_parameter_subscriber_;
 
   // Image variables
+  cv_bridge::CvImagePtr cv_ptr_;
   std::pair<cv::Mat, std::vector<int>> current_game_board_;
   std::vector<cv::Point> grid_centers_;
   std::pair<std::array<float, 2>, cv::Point> center_square_infos_;
   std_msgs::msg::Int32MultiArray current_game_board_squares_;
   bool order_done_;
+  std_msgs::msg::Int32 perception_param_;
 };
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<CameraSubscriber>());
+  auto node = std::make_shared<CameraSubscriber>();
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(node);
+  executor.spin();
   rclcpp::shutdown();
   return 0;
 }

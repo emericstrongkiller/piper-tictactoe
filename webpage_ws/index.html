@@ -55,14 +55,44 @@
                         </div>
                     </div>
                 </div>
+                <div class="col-md-12 text-center">
+                    <div class="card">
+                        /cvtColor_perception_server
+                        <div id="divCamera2"></div>
+                    </div>
+                </div>
             </div>
             <div class="row">
-                <!-- Live Camera -->
-                <div class="col-md-6 text-center">
+                <!-- Perception choice -->
+                <select id="video_server_" v-model="video_server">
+                    <option value="/camera/D435/color/image_raw">raw_image_server</option>
+                    <option value="/perception_server">perception_server</option>
+                    <option value="/cvtColor_perception_server">cvtColor_perception_server</option>
+                    <option value="/no_shadow_perception_server">no_shadow_perception_server</option>
+                    <option value="/binary_image_perception_server">binary_image_perception_server</option>
+                </select>
+                <!-- Parameter slider -->
+                <div class="slidecontainer">
+                    <input type="range" min="1" max="100" class="slider" v-model="slider_val" />
+                </div>
+                <div>
+                    {{slider_val}}
+                </div>
+                <!-- Live Cameras -->
+                <div class="col-md-12 text-center">
                     <div class="card">
+                        Camera1
                         <div id="divCamera"></div>
                     </div>
                 </div>
+                <!--
+                <div class="col-md-6 text-center">
+                    <div class="card">
+                        Camera2
+                        <div id="divCamera2"></div>
+                    </div>
+                </div>
+                -->
                 <div class="col-md-6 text-center">
                     <div class="card">
                         <h4>Piper Positions</h4>
