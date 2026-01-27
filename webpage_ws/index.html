@@ -70,13 +70,20 @@
                     <option value="/cvtColor_perception_server">cvtColor_perception_server</option>
                     <option value="/no_shadow_perception_server">no_shadow_perception_server</option>
                     <option value="/binary_image_perception_server">binary_image_perception_server</option>
+                    <option value="/roi_image_perception_server">roi_image_perception_server</option>
                 </select>
                 <!-- Parameter slider -->
                 <div class="slidecontainer">
-                    <input type="range" min="1" max="100" class="slider" v-model="slider_val" />
+                    <input type="range" min="1" max="200" class="slider" v-model="slider_val" />
                 </div>
                 <div>
                     {{slider_val}}
+                </div>
+                <div class="slidecontainer">
+                    <input type="range" min="1" max="200" class="slider" v-model="slider2_val" />
+                </div>
+                <div>
+                    {{slider2_val}}
                 </div>
                 <!-- Live Cameras -->
                 <div class="col-md-12 text-center">

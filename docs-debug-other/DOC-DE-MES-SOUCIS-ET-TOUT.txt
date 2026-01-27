@@ -25,7 +25,37 @@ https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invari
 
 
 
-3618 3620 3622 3646 3647 3658 3624 3832 4123 4139 4354 4364
+- REAL ROBOT PERCEPTION
+    1. First I chose to try cropping the image because:
+        - My MSER was detecting false positive and it was hard to filter everything out only by blob size interval
+        - Same goes for the HoughLines algo, which had a lot of lines, difficult to filter all out in sim THUS even harder in real conditions
+       * findContours with a size interval for the tablet.
+       * Why no Canny or Sobel ? they are not good in bad lightning conditions apparently
+       * Then change to an adaptative threshold
+    2. Then Warping the image
+       * Affine transform ? Nope, because it can only make parallelograms, and my camera definitely has a trapezoid
+         => Perspective transform.
+    3. Then another binary threshold on the shadow removed image with an adaptive threshold thats generally lower to catch the grid and shapes this time
+        * Why no Canny ? Tested, works as good as binary, but multiple circles inside each other as it checks both inside and outside edges and its unnefficient
+        * Why adaptive ? Because regular threshold caused some shapes to be only partially perceived
+        * YEP with gaussian and tuning it was goood
+    4. Grid lines with HoughLines
+        * One HoughLines for vertical, one for horizontal. Why ? Because the votes parameter needed for horizontal lines to filter noisy horizontal lines is too high,
+          and filters out all vertical lines.
+          => Thus 2 HoughLines: HoughLines(horiz).score HIGH -- HoughLines(vertical).score LOW
+        * Then manual clustering + calculation of the middle lines
+        * In the future I would use kmeans maybbe : https://stackoverflow.com/questions/46565975/find-intersection-point-of-two-lines-drawn-using-houghlines-opencv => 
+          "With HoughLines, you already have the result as rho, theta so you can easily segment into two classes of angle with theta. You can use for e.g. cv2.kmeans() 
+          with theta as your data you want to split."
+        * Then calculate centers and shit
+    5. Grid Shapes using MSER/SIFT
+        * SIFT for Each square ? NOPE => MSER on whole cropped image => Identify which squares are populated => SIFT on populated squares ONLY.
+        * 
+
+
+- The urge to finish a functional project pushed me to just dive down on code with a retro-planning that was I think functional, 
+  but not enough code structure analysis (like what nodes do I create, what architecture Do i want for the system ?) 
+  => Result: some of the code is in my opinion not clean/readable enough for me for a final project. (Data reused, variables added as return in some function) -> EXAMPLES PLEASE
 
 
 - POUR LA DETECTION DES LIGNES CETAIT CA SON WORKFLOW:

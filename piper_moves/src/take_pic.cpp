@@ -6,6 +6,7 @@
 #include "std_msgs/msg/detail/int32_multi_array__struct.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstddef>
+#include <iterator>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -51,7 +52,7 @@ public:
                   std::placeholders::_1),
         sub_options);
     perception_parameter_subscriber_ =
-        this->create_subscription<std_msgs::msg::Int32>(
+        this->create_subscription<std_msgs::msg::Int32MultiArray>(
             "/perception_param", 10,
             std::bind(
                 &CameraSubscriber::perception_parameter_subscriber_callback,
@@ -73,9 +74,12 @@ public:
     binary_image_server_publisher_ =
         this->create_publisher<sensor_msgs::msg::Image>(
             "/binary_image_perception_server", 10);
+    roi_image_server_publisher_ =
+        this->create_publisher<sensor_msgs::msg::Image>(
+            "/roi_image_perception_server", 10);
 
     // variables init
-    perception_param_.data = 25;
+    perception_params_.data = {50, 50};
   }
 
 private:
@@ -86,10 +90,11 @@ private:
   }
 
   void perception_parameter_subscriber_callback(
-      const std_msgs::msg::Int32::SharedPtr msg) {
-    perception_param_.data = msg->data;
-    RCLCPP_DEBUG(this->get_logger(), "perception_param_ is now: %d",
-                 static_cast<int>(perception_param_.data));
+      const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
+    perception_params_.data = msg->data;
+    RCLCPP_DEBUG(this->get_logger(), "perception_params_ are now: %d | %d",
+                 static_cast<int>(perception_params_.data[0]),
+                 static_cast<int>(perception_params_.data[1]));
   }
 
   void listener_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
@@ -138,12 +143,13 @@ private:
     no_shadow_server_publisher_->publish(*cv_ptr_->toImageMsg());
 
     // binary image
-    // perception_param_.data for threshold dddude
-    cv::threshold(shadow_removed, shadow_removed, 25, 255, 0);
+    // perception_params_.data[0] for threshold dddude
+    cv::Mat binary_filtered;
+    cv::threshold(shadow_removed, binary_filtered, 25, 255, 0);
     // contours
     std::vector<std::vector<cv::Point>> contours;
     std::vector<cv::Vec4i> hierarchy;
-    cv::findContours(shadow_removed, contours, hierarchy, cv::RETR_TREE,
+    cv::findContours(binary_filtered, contours, hierarchy, cv::RETR_TREE,
                      cv::CHAIN_APPROX_SIMPLE);
     RCLCPP_DEBUG(this->get_logger(), "Found %zu contours", contours.size());
     // find the tablet contour
@@ -175,9 +181,9 @@ private:
     }
     width = x_end - x_start;
     height = y_end - y_start;
-    RCLCPP_INFO(this->get_logger(),
-                "x_start: %d, y_start: %d, x_end: %d, y_end: %d", x_start,
-                y_start, x_end, y_end);
+    RCLCPP_DEBUG(this->get_logger(),
+                 "x_start: %d, y_start: %d, x_end: %d, y_end: %d", x_start,
+                 y_start, x_end, y_end);
 
     // find the actual two top corners of the tablet (since its warped, not a
     // perfect rectangle so yeah)
@@ -200,7 +206,7 @@ private:
     bottom_left_x = x_start;
     bottom_left_y = y_end;
 
-    RCLCPP_INFO(
+    RCLCPP_DEBUG(
         this->get_logger(),
         "top_left_x: %d, top_left_y: %d, top_right_x: %d, top_right_y: %d",
         top_left_x, top_left_y, top_right_x, top_right_y);
@@ -215,24 +221,279 @@ private:
     srcQuad[2] = cv::Point2f(x_end, y_end);
     srcQuad[3] = cv::Point2f(bottom_left_x, bottom_left_y);
 
-    dstQuad[0] = cv::Point2f(x_start + perception_param_.data, y_start);
-    dstQuad[1] = cv::Point2f(x_end - perception_param_.data, y_start);
+    dstQuad[0] = cv::Point2f(x_start + 0, y_start);
+    dstQuad[1] = cv::Point2f(x_end - 0, y_start);
     dstQuad[2] = cv::Point2f(x_end, y_end);
     dstQuad[3] = cv::Point2f(bottom_left_x, bottom_left_y);
 
     warp_matrix = cv::getPerspectiveTransform(srcQuad, dstQuad);
+    cv::warpPerspective(shadow_removed, shadow_removed, warp_matrix,
+                        shadow_removed.size());
     cv::warpPerspective(image, image, warp_matrix, image.size());
 
     //    cv::drawContours(image, contours, tablet_contour_index,
     //                     cv::Scalar(0, 255, 0), 3);
-    cv_ptr_->image = shadow_removed;
+    cv_ptr_->image = binary_filtered;
     cv_ptr_->encoding = "mono8";
     binary_image_server_publisher_->publish(*cv_ptr_->toImageMsg());
 
     // Crop the image using ROI
-    cv::Rect roi(x_start, y_start, width, height);
-    cv::Mat cropped_img = image(roi);
-    cv_ptr_->image = image;
+    cv::Rect roi(x_start + 10, y_start + 10, width - 20, height - 20);
+    cv::Mat shadow_removed_cropped = shadow_removed(roi);
+    cv::Mat img_cropped = image(roi);
+
+    // adaptive filter on roi
+    // cv::threshold(shadow_removed_cropped, shadow_removed_cropped, 11, 255,
+    // 0);
+    cv::adaptiveThreshold(shadow_removed_cropped, shadow_removed_cropped, 255,
+                          cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY, 11,
+                          -3);
+
+    // Detect vertical lines first
+    std::vector<cv::Vec4i> v_lines;
+    cv::HoughLinesP(shadow_removed_cropped, v_lines, 1, CV_PI / 180, 50, 50,
+                    10);
+    // filter vertical
+    std::vector<cv::Vec4i> v_lines_full;
+    for (auto &l : v_lines) {
+      float angle = atan2(l[3] - l[1], l[2] - l[0]) * 180 / CV_PI;
+      if (abs(angle - 90) < 20 || abs(angle + 90) < 20) {
+        v_lines_full.push_back(l);
+        // cv::line(img_cropped, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]),
+        //          cv::Scalar(0, 255, 0), 1, 8);
+      }
+    }
+
+    // Detect horizontal lines after
+    std::vector<cv::Vec4i> h_lines;
+    cv::HoughLinesP(shadow_removed_cropped, h_lines, 1, (CV_PI / 180), 85, 1,
+                    10);
+    // filter horizontal
+    std::vector<cv::Vec4i> h_lines_full;
+    for (auto &l : h_lines) {
+      float angle = atan2(l[3] - l[1], l[2] - l[0]) * 180 / CV_PI;
+      if (abs(angle) < 2 || abs(angle) > 178) {
+        h_lines_full.push_back(l);
+        //        cv::line(img_cropped, cv::Point(l[0], l[1]), cv::Point(l[2],
+        //        l[3]),
+        //                 cv::Scalar(0, 0, 255), 1, 8);
+      }
+    }
+
+    // Calculate and Draw Vertical lines
+    std::vector<int> v_line_x_positions;
+    std::vector<int> v_line_y_positions;
+    int y_vert_min, y_vert_max;
+    for (auto &l : v_lines_full) {
+      v_line_x_positions.push_back(static_cast<int>((l[0] + l[2]) / 2.0f));
+      RCLCPP_DEBUG(this->get_logger(), "pushed back: %d -> v_line_x_positions",
+                   static_cast<int>((l[0] + l[2]) / 2.0f));
+    }
+    std::sort(v_line_x_positions.begin(), v_line_x_positions.end());
+    // Cluster by proximity (merge lines within 4px)
+    std::vector<int> clustered;
+    clustered.push_back(v_line_x_positions[0]);
+    RCLCPP_DEBUG(this->get_logger(), "CLUSTERED[0]: %d", clustered[0]);
+    for (auto &pos : v_line_x_positions) {
+      RCLCPP_DEBUG(this->get_logger(), "DIDN'T CLUSTER: %d", pos);
+      if (abs(pos - clustered.back()) > 4) {
+        clustered.push_back(pos);
+        RCLCPP_DEBUG(this->get_logger(), "CLUSTERED: %d", pos);
+      }
+    }
+    // get max and min y
+    for (auto &l : v_lines_full) {
+      v_line_y_positions.push_back(l[1]);
+      v_line_y_positions.push_back(l[3]);
+    }
+    y_vert_min =
+        *std::min_element(v_line_y_positions.begin(), v_line_y_positions.end());
+    y_vert_max =
+        *std::max_element(v_line_y_positions.begin(), v_line_y_positions.end());
+    RCLCPP_DEBUG(this->get_logger(), "y_vert_min: %d", y_vert_min);
+    RCLCPP_DEBUG(this->get_logger(), "y_vert_max: %d", y_vert_max);
+    // draw vertical lines
+    if (clustered.size() == 4) {
+      //      cv::line(img_cropped, cv::Point(clustered[0], y_vert_min),
+      //               cv::Point(clustered[0], y_vert_max), cv::Scalar(0, 0,
+      //               255), 1, 8);
+      //      cv::line(img_cropped, cv::Point(clustered[1], y_vert_min),
+      //               cv::Point(clustered[1], y_vert_max), cv::Scalar(0, 0,
+      //               255), 1, 8);
+      //      cv::line(img_cropped, cv::Point(clustered[2], y_vert_min),
+      //               cv::Point(clustered[2], y_vert_max), cv::Scalar(0, 0,
+      //               255), 1, 8);
+      //      cv::line(img_cropped, cv::Point(clustered[3], y_vert_min),
+      //               cv::Point(clustered[3], y_vert_max), cv::Scalar(0, 0,
+      //               255), 1, 8);
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "Not enough clustered lines: %zu",
+                   clustered.size());
+    }
+
+    // Calculate and Draw Horizontal lines
+    std::vector<int> h_line_x_positions;
+    std::vector<int> h_line_y_positions;
+    int x_horiz_min, x_horiz_max;
+    for (auto &l : h_lines_full) {
+      h_line_y_positions.push_back(static_cast<int>((l[1] + l[3]) / 2.0f));
+      RCLCPP_DEBUG(this->get_logger(), "pushed back: %d -> h_line_y_positions",
+                   static_cast<int>((l[1] + l[3]) / 2.0f));
+    }
+    std::sort(h_line_y_positions.begin(), h_line_y_positions.end());
+    // Cluster by proximity (merge lines within 4px)
+    std::vector<int> h_clustered;
+    h_clustered.push_back(h_line_y_positions[0]);
+    RCLCPP_DEBUG(this->get_logger(), "h_clustered[0]: %d", h_clustered[0]);
+    for (auto &pos : h_line_y_positions) {
+      RCLCPP_DEBUG(this->get_logger(), "DIDN'T CLUSTER: %d", pos);
+      if (abs(pos - h_clustered.back()) > 3) {
+        h_clustered.push_back(pos);
+        RCLCPP_DEBUG(this->get_logger(), "h_clustered: %d", pos);
+      }
+    }
+    // get max and min x
+    for (auto &l : h_lines_full) {
+      h_line_x_positions.push_back(l[0]);
+      h_line_x_positions.push_back(l[2]);
+    }
+    x_horiz_min =
+        *std::min_element(h_line_x_positions.begin(), h_line_x_positions.end());
+    x_horiz_max =
+        *std::max_element(h_line_x_positions.begin(), h_line_x_positions.end());
+    RCLCPP_DEBUG(this->get_logger(), "x_horiz_min: %d", x_horiz_min);
+    RCLCPP_DEBUG(this->get_logger(), "x_horiz_max: %d", x_horiz_max);
+    RCLCPP_DEBUG(this->get_logger(), "----------------------");
+    // draw horizontal lines
+    if (h_clustered.size() == 4) {
+      // cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[0]),
+      //          cv::Point(x_horiz_max, h_clustered[0]), cv::Scalar(0, 0, 255),
+      //          1, 8);
+      // cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[1]),
+      //          cv::Point(x_horiz_max, h_clustered[1]), cv::Scalar(0, 0, 255),
+      //          1, 8);
+      // cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[2]),
+      //          cv::Point(x_horiz_max, h_clustered[2]), cv::Scalar(0, 0, 255),
+      //          1, 8);
+      // cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[3]),
+      //          cv::Point(x_horiz_max, h_clustered[3]), cv::Scalar(0, 0, 255),
+      //          1, 8);
+
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "Not enough h_clustered lines: %zu",
+                   h_clustered.size());
+    }
+
+    // Calculate middle lines
+    std::vector<cv::Point> vert_middle_lines;
+    std::vector<cv::Point> horiz_middle_lines;
+    horiz_middle_lines.push_back(
+        cv::Point(x_horiz_min, (h_clustered[0] + h_clustered[1]) / 2));
+    horiz_middle_lines.push_back(
+        cv::Point(x_horiz_max, (h_clustered[0] + h_clustered[1]) / 2));
+    horiz_middle_lines.push_back(
+        cv::Point(x_horiz_min, (h_clustered[2] + h_clustered[3]) / 2));
+    horiz_middle_lines.push_back(
+        cv::Point(x_horiz_max, (h_clustered[2] + h_clustered[3]) / 2));
+    vert_middle_lines.push_back(
+        cv::Point((clustered[0] + clustered[1]) / 2, y_vert_min));
+    vert_middle_lines.push_back(
+        cv::Point((clustered[0] + clustered[1]) / 2, y_vert_max));
+    vert_middle_lines.push_back(
+        cv::Point((clustered[2] + clustered[3]) / 2, y_vert_min));
+    vert_middle_lines.push_back(
+        cv::Point((clustered[2] + clustered[3]) / 2, y_vert_max));
+    // draw middle lines
+    cv::line(img_cropped, horiz_middle_lines[0], horiz_middle_lines[1],
+             cv::Scalar(0, 0, 255), 1, 8);
+    cv::line(img_cropped, horiz_middle_lines[2], horiz_middle_lines[3],
+             cv::Scalar(0, 0, 255), 1, 8);
+    cv::line(img_cropped, vert_middle_lines[0], vert_middle_lines[1],
+             cv::Scalar(0, 0, 255), 1, 8);
+    cv::line(img_cropped, vert_middle_lines[2], vert_middle_lines[3],
+             cv::Scalar(0, 0, 255), 1, 8);
+    // Find and Draw Intersections
+    // top->right|bot_left->right
+    std::vector<cv::Point> grid_center_vertices;
+    grid_center_vertices.push_back(
+        find_lines_intersection(horiz_middle_lines[0], horiz_middle_lines[1],
+                                vert_middle_lines[0], vert_middle_lines[1]));
+    grid_center_vertices.push_back(
+        find_lines_intersection(horiz_middle_lines[0], horiz_middle_lines[1],
+                                vert_middle_lines[2], vert_middle_lines[3]));
+    grid_center_vertices.push_back(
+        find_lines_intersection(horiz_middle_lines[2], horiz_middle_lines[3],
+                                vert_middle_lines[0], vert_middle_lines[1]));
+    grid_center_vertices.push_back(
+        find_lines_intersection(horiz_middle_lines[2], horiz_middle_lines[3],
+                                vert_middle_lines[2], vert_middle_lines[3]));
+    cv::circle(img_cropped, grid_center_vertices[0], 3, cv::Scalar(0, 0, 255));
+    cv::circle(img_cropped, grid_center_vertices[1], 3, cv::Scalar(0, 0, 255));
+    cv::circle(img_cropped, grid_center_vertices[2], 3, cv::Scalar(0, 0, 255));
+    cv::circle(img_cropped, grid_center_vertices[3], 3, cv::Scalar(0, 0, 255));
+
+    // calculate grid center
+    cv::Point grid_center;
+    grid_center.x = (grid_center_vertices[0].x + grid_center_vertices[3].x) / 2;
+    grid_center.y = (grid_center_vertices[0].y + grid_center_vertices[3].y) / 2;
+    int center_square_width =
+        grid_center_vertices[3].x - grid_center_vertices[0].x;
+    int center_square_height =
+        grid_center_vertices[3].y - grid_center_vertices[0].y;
+    // calculate all 9 grid square centers
+    std::vector<cv::Point> square_centers;
+    square_centers.push_back(cv::Point(grid_center.x - center_square_width,
+                                       grid_center.y + center_square_height));
+    square_centers.push_back(
+        cv::Point(grid_center.x, grid_center.y + center_square_height));
+    square_centers.push_back(cv::Point(grid_center.x + center_square_width,
+                                       grid_center.y + center_square_height));
+    square_centers.push_back(
+        cv::Point(grid_center.x - center_square_width, grid_center.y));
+    square_centers.push_back(cv::Point(grid_center.x, grid_center.y));
+    square_centers.push_back(
+        cv::Point(grid_center.x + center_square_width, grid_center.y));
+    square_centers.push_back(cv::Point(grid_center.x - center_square_width,
+                                       grid_center.y - center_square_height));
+    square_centers.push_back(
+        cv::Point(grid_center.x, grid_center.y - center_square_height));
+    square_centers.push_back(cv::Point(grid_center.x + center_square_width,
+                                       grid_center.y - center_square_height));
+    // draw grid centers
+    for (auto &el : square_centers) {
+      cv::circle(img_cropped, el, 3, cv::Scalar(0, 255, 0));
+    }
+    // draw rectangle areas around centers
+    for (size_t i = 0; i < square_centers.size(); i++) {
+      cv::rectangle(img_cropped,
+                    cv::Point(square_centers[static_cast<int>(i)].x -
+                                  (center_square_width / 2),
+                              square_centers[static_cast<int>(i)].y -
+                                  (center_square_height / 2)),
+                    cv::Point(square_centers[static_cast<int>(i)].x +
+                                  (center_square_width / 2),
+                              square_centers[static_cast<int>(i)].y +
+                                  (center_square_height / 2)),
+                    cv::Scalar(255, 0, 0), 1);
+    }
+
+    cv::Mat cropped_gray;
+    cv::cvtColor(img_cropped, cropped_gray, cv::COLOR_BGR2GRAY);
+
+    std::vector<cv::KeyPoint> detected_shapes = detect_shapes(cropped_gray, 10);
+    print_detected_shapes(detected_shapes, img_cropped);
+
+    RCLCPP_INFO(this->get_logger(), "detected_shapes_size: %zu",
+                detected_shapes.size());
+    for (size_t i = 0; i < detected_shapes.size(); i++) {
+      RCLCPP_INFO(this->get_logger(), "detected_shapes[%zu]: YAH", i);
+    }
+
+    cv_ptr_->image = img_cropped;
+    cv_ptr_->encoding = "bgr8";
+    roi_image_server_publisher_->publish(*cv_ptr_->toImageMsg());
+
+    // gridLines test
 
     // cv_ptr_->image = processed_image;
     // cv_ptr_->encoding = "mono8";
@@ -314,7 +575,7 @@ private:
      print_detected_shapes(detected_shapes, image);
 
     */
-    return std::pair<cv::Mat, std::vector<int>>(cropped_img,
+    return std::pair<cv::Mat, std::vector<int>>(img_cropped,
                                                 game_board_grid_state);
   }
 
@@ -682,6 +943,27 @@ private:
     return shape_type;
   }
 
+  cv::Point find_lines_intersection(cv::Point x1_y1, cv::Point x2_y2,
+                                    cv::Point x3_y3, cv::Point x4_y4) {
+    cv::Point intersection;
+    float x1 = x1_y1.x, y1 = x1_y1.y, x2 = x2_y2.x, y2 = x2_y2.y, x3 = x3_y3.x,
+          y3 = x3_y3.y, x4 = x4_y4.x, y4 = x4_y4.y;
+
+    float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) /
+              ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4));
+    float u = -(((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) /
+                ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)));
+
+    if (0 <= t && t <= 1 && 0 <= u && u <= 1) {
+      intersection.x = x1 + t * (x2 - x1);
+      intersection.y = y1 + t * (y2 - y1);
+      return intersection;
+    }
+
+    RCLCPP_ERROR(this->get_logger(), "No intersection found");
+    return intersection;
+  }
+
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr order_subscriber_;
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr
@@ -694,8 +976,10 @@ private:
       no_shadow_server_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
       binary_image_server_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      roi_image_server_publisher_;
   // perception para subscriber
-  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr
+  rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
       perception_parameter_subscriber_;
 
   // Image variables
@@ -705,7 +989,7 @@ private:
   std::pair<std::array<float, 2>, cv::Point> center_square_infos_;
   std_msgs::msg::Int32MultiArray current_game_board_squares_;
   bool order_done_;
-  std_msgs::msg::Int32 perception_param_;
+  std_msgs::msg::Int32MultiArray perception_params_;
 };
 
 int main(int argc, char **argv) {

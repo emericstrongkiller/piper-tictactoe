@@ -11,11 +11,12 @@ let vueApp = new Vue({
         // robot variables
         current_robot_pos: 0,
         //perception variables
-        video_server: "/camera/D435/color/image_raw",
+        video_server: "/roi_image_perception_server",
         viewer: null,
         viewer2: null,
         // slider value
         slider_val: 10,
+        slider2_val: 10,
     },
     methods: {
         connect: function() {
@@ -93,7 +94,7 @@ let vueApp = new Vue({
                 host: host,
                 width: 1920,
                 height: 1080,
-                topic: '/cvtColor_perception_server',
+                topic: '/camera/D435/color/image_raw',
                 ssl: true,
             })
             this.viewer = new MJPEGCANVAS.Viewer({
@@ -106,24 +107,29 @@ let vueApp = new Vue({
                 ssl: true,
             })
         },
-        sendParameter: function(val) {
+        sendParameter: function(slider, slider2) {
             let topic = new ROSLIB.Topic({
                 ros: this.ros,
                 name: '/perception_param',
-                messageType: 'std_msgs/msg/Int32'
+                messageType: 'std_msgs/msg/Int32MultiArray'
             })
 
-            let message = new ROSLIB.Message({data: Number(val)})
+            let message = new ROSLIB.Message({data: [Number(slider), Number(slider2)]})
             topic.publish(message)
         }
     },
     watch: {
         slider_val(val) {
             // publish param
-            this.sendParameter(val)
+            this.sendParameter(val, this.slider2_val)
+            console.log("slider_val: " + this.slider_val + "\nslider2_val: " + this.slider2_val)
+        },
+        slider2_val(val) {
+            // publish param
+            this.sendParameter(this.slider_val, val)
+            console.log("slider_val: " + this.slider_val + "\nslider2_val: " + this.slider2_val)
         },
         video_server(val) {
-            console.log(val)
             this.setCameras()
         },
     },
