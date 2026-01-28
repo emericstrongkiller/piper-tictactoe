@@ -50,7 +50,15 @@ https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invari
         * Then calculate centers and shit
     5. Grid Shapes using MSER/SIFT
         * SIFT for Each square ? NOPE => MSER on whole cropped image => Identify which squares are populated => SIFT on populated squares ONLY.
+        * MSER Wak WACK (see screenshot), so NOPE => exploring other things
+        * LightWeight CNN ? SIFT ? Contour Analysis ?
+        * Filling the shapes was wack
+        * SIFT was ?? lot of keypoints but what to do ?
+        * Contours analysis was GREAT, nice contours on everything, no noise
+        * Contour detection per square Doesnt work right off the bat, I need to make the shape lines thinner in order to avoid contouring the whole shape instead of each individually.
         * 
+
+        TRY ADAPTATIVE CANNY EDGES
 
 
 - The urge to finish a functional project pushed me to just dive down on code with a retro-planning that was I think functional, 

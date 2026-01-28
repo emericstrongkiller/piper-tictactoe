@@ -15,8 +15,9 @@ let vueApp = new Vue({
         viewer: null,
         viewer2: null,
         // slider value
-        slider_val: 10,
-        slider2_val: 10,
+        slider_val: 0,
+        slider2_val: 3,
+        slider3_val: 0,
     },
     methods: {
         connect: function() {
@@ -107,27 +108,31 @@ let vueApp = new Vue({
                 ssl: true,
             })
         },
-        sendParameter: function(slider, slider2) {
+        sendParameter: function(slider, slider2, slider3) {
             let topic = new ROSLIB.Topic({
                 ros: this.ros,
                 name: '/perception_param',
                 messageType: 'std_msgs/msg/Int32MultiArray'
             })
 
-            let message = new ROSLIB.Message({data: [Number(slider), Number(slider2)]})
+            let message = new ROSLIB.Message({data: [Number(slider), Number(slider2), Number(slider3)]})
             topic.publish(message)
         }
     },
     watch: {
         slider_val(val) {
             // publish param
-            this.sendParameter(val, this.slider2_val)
-            console.log("slider_val: " + this.slider_val + "\nslider2_val: " + this.slider2_val)
+            this.sendParameter(val, this.slider2_val, this.slider3_val)
+            //console.log("slider_val: " + this.slider_val + "\nslider2_val: " + this.slider2_val)
         },
         slider2_val(val) {
             // publish param
-            this.sendParameter(this.slider_val, val)
-            console.log("slider_val: " + this.slider_val + "\nslider2_val: " + this.slider2_val)
+            this.sendParameter(this.slider_val, val, this.slider3_val)
+            //console.log("slider_val: " + this.slider_val + "\nslider2_val: " + this.slider2_val)
+        },
+        slider3_val(val) {
+            // publish param
+            this.sendParameter(this.slider_val, this.slider2_val, val)
         },
         video_server(val) {
             this.setCameras()

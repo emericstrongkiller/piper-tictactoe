@@ -25,6 +25,8 @@
 #include <vector>
 
 const double TABLET_CONTOUR_AREA_INTERVAL[2] = {25000, 30000};
+const int VERTICAL_LINES_X_CLUSTERS_INTERVAL = 1;
+const int HORIZONTAL_LINES_Y_CLUSTERS_INTERVAL = 2;
 
 class CameraSubscriber : public rclcpp::Node {
 public:
@@ -79,7 +81,7 @@ public:
             "/roi_image_perception_server", 10);
 
     // variables init
-    perception_params_.data = {50, 50};
+    perception_params_.data = {0, 3, 0};
   }
 
 private:
@@ -92,9 +94,10 @@ private:
   void perception_parameter_subscriber_callback(
       const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
     perception_params_.data = msg->data;
-    RCLCPP_DEBUG(this->get_logger(), "perception_params_ are now: %d | %d",
-                 static_cast<int>(perception_params_.data[0]),
-                 static_cast<int>(perception_params_.data[1]));
+    RCLCPP_INFO(this->get_logger(), "perception_params_ are now: %d | %d | %d",
+                static_cast<int>(perception_params_.data[0]),
+                static_cast<int>(perception_params_.data[1]),
+                static_cast<int>(perception_params_.data[2]));
   }
 
   void listener_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
@@ -126,6 +129,8 @@ private:
     cv::Mat processed_image;
     std::vector<int> game_board_grid_state(9, 0); // start grid with no shape
 
+    grid_center_vertices_.clear();
+
     // gray image
     cv::cvtColor(image, processed_image, cv::COLOR_BGR2GRAY);
     cv_ptr_->image = processed_image;
@@ -143,7 +148,6 @@ private:
     no_shadow_server_publisher_->publish(*cv_ptr_->toImageMsg());
 
     // binary image
-    // perception_params_.data[0] for threshold dddude
     cv::Mat binary_filtered;
     cv::threshold(shadow_removed, binary_filtered, 25, 255, 0);
     // contours
@@ -233,14 +237,16 @@ private:
 
     //    cv::drawContours(image, contours, tablet_contour_index,
     //                     cv::Scalar(0, 255, 0), 3);
-    cv_ptr_->image = binary_filtered;
-    cv_ptr_->encoding = "mono8";
-    binary_image_server_publisher_->publish(*cv_ptr_->toImageMsg());
 
     // Crop the image using ROI
     cv::Rect roi(x_start + 10, y_start + 10, width - 20, height - 20);
     cv::Mat shadow_removed_cropped = shadow_removed(roi);
     cv::Mat img_cropped = image(roi);
+
+    cv::resize(shadow_removed_cropped, shadow_removed_cropped,
+               cv::Size(width, height * 1.7), 0, 0, cv::INTER_LINEAR);
+    cv::resize(img_cropped, img_cropped, cv::Size(width, height * 1.7), 0, 0,
+               cv::INTER_LINEAR);
 
     // adaptive filter on roi
     // cv::threshold(shadow_removed_cropped, shadow_removed_cropped, 11, 255,
@@ -249,10 +255,30 @@ private:
                           cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY, 11,
                           -3);
 
+    // FOR Grid LINES Adaptive Canny TESTTT ###############################
+
+    cv::Mat processed_imaged;
+    cv::cvtColor(img_cropped, processed_imaged, cv::COLOR_BGR2GRAY);
+
+    cv::GaussianBlur(processed_imaged, processed_imaged, cv::Size(5, 5), 0);
+
+    // Get median pixel for adaptive Canny Thresholds
+    std::vector<uchar> pixels(processed_imaged.begin<uchar>(),
+                              processed_imaged.end<uchar>());
+    std::sort(pixels.begin(), pixels.end());
+    double median = pixels[pixels.size() / 2];
+    int lower_threshold = std::max(0, static_cast<int>(0.66 * median));
+    int upper_threshold = std::min(255, static_cast<int>(1.33 * median));
+
+    // Apply Canny
+    cv::Mat edges;
+    cv::Canny(processed_imaged, edges, lower_threshold, upper_threshold);
+
+    // GRID LINES DETECTION ######################################
+
     // Detect vertical lines first
     std::vector<cv::Vec4i> v_lines;
-    cv::HoughLinesP(shadow_removed_cropped, v_lines, 1, CV_PI / 180, 50, 50,
-                    10);
+    cv::HoughLinesP(edges, v_lines, 1, CV_PI / 180, 90, 60, 60);
     // filter vertical
     std::vector<cv::Vec4i> v_lines_full;
     for (auto &l : v_lines) {
@@ -266,17 +292,15 @@ private:
 
     // Detect horizontal lines after
     std::vector<cv::Vec4i> h_lines;
-    cv::HoughLinesP(shadow_removed_cropped, h_lines, 1, (CV_PI / 180), 85, 1,
-                    10);
+    cv::HoughLinesP(edges, h_lines, 1, (CV_PI / 180), 60, 30, 20);
     // filter horizontal
     std::vector<cv::Vec4i> h_lines_full;
     for (auto &l : h_lines) {
       float angle = atan2(l[3] - l[1], l[2] - l[0]) * 180 / CV_PI;
-      if (abs(angle) < 2 || abs(angle) > 178) {
+      if (abs(angle) < 10 || abs(angle) > 170) {
         h_lines_full.push_back(l);
-        //        cv::line(img_cropped, cv::Point(l[0], l[1]), cv::Point(l[2],
-        //        l[3]),
-        //                 cv::Scalar(0, 0, 255), 1, 8);
+        // cv::line(img_cropped, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]),
+        //          cv::Scalar(0, 0, 255), 1, 8);
       }
     }
 
@@ -296,7 +320,7 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "CLUSTERED[0]: %d", clustered[0]);
     for (auto &pos : v_line_x_positions) {
       RCLCPP_DEBUG(this->get_logger(), "DIDN'T CLUSTER: %d", pos);
-      if (abs(pos - clustered.back()) > 4) {
+      if (abs(pos - clustered.back()) > VERTICAL_LINES_X_CLUSTERS_INTERVAL) {
         clustered.push_back(pos);
         RCLCPP_DEBUG(this->get_logger(), "CLUSTERED: %d", pos);
       }
@@ -314,18 +338,18 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "y_vert_max: %d", y_vert_max);
     // draw vertical lines
     if (clustered.size() == 4) {
-      //      cv::line(img_cropped, cv::Point(clustered[0], y_vert_min),
-      //               cv::Point(clustered[0], y_vert_max), cv::Scalar(0, 0,
-      //               255), 1, 8);
-      //      cv::line(img_cropped, cv::Point(clustered[1], y_vert_min),
-      //               cv::Point(clustered[1], y_vert_max), cv::Scalar(0, 0,
-      //               255), 1, 8);
-      //      cv::line(img_cropped, cv::Point(clustered[2], y_vert_min),
-      //               cv::Point(clustered[2], y_vert_max), cv::Scalar(0, 0,
-      //               255), 1, 8);
-      //      cv::line(img_cropped, cv::Point(clustered[3], y_vert_min),
-      //               cv::Point(clustered[3], y_vert_max), cv::Scalar(0, 0,
-      //               255), 1, 8);
+      // cv::line(img_cropped, cv::Point(clustered[0], y_vert_min),
+      //          cv::Point(clustered[0], y_vert_max), cv::Scalar(0, 0, 255), 1,
+      //          8);
+      // cv::line(img_cropped, cv::Point(clustered[1], y_vert_min),
+      //          cv::Point(clustered[1], y_vert_max), cv::Scalar(0, 0, 255), 1,
+      //          8);
+      // cv::line(img_cropped, cv::Point(clustered[2], y_vert_min),
+      //          cv::Point(clustered[2], y_vert_max), cv::Scalar(0, 0, 255), 1,
+      //          8);
+      // cv::line(img_cropped, cv::Point(clustered[3], y_vert_min),
+      //          cv::Point(clustered[3], y_vert_max), cv::Scalar(0, 0, 255), 1,
+      //          8);
     } else {
       RCLCPP_ERROR(this->get_logger(), "Not enough clustered lines: %zu",
                    clustered.size());
@@ -347,7 +371,8 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "h_clustered[0]: %d", h_clustered[0]);
     for (auto &pos : h_line_y_positions) {
       RCLCPP_DEBUG(this->get_logger(), "DIDN'T CLUSTER: %d", pos);
-      if (abs(pos - h_clustered.back()) > 3) {
+      if (abs(pos - h_clustered.back()) >
+          HORIZONTAL_LINES_Y_CLUSTERS_INTERVAL) {
         h_clustered.push_back(pos);
         RCLCPP_DEBUG(this->get_logger(), "h_clustered: %d", pos);
       }
@@ -378,7 +403,6 @@ private:
       // cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[3]),
       //          cv::Point(x_horiz_max, h_clustered[3]), cv::Scalar(0, 0, 255),
       //          1, 8);
-
     } else {
       RCLCPP_ERROR(this->get_logger(), "Not enough h_clustered lines: %zu",
                    h_clustered.size());
@@ -404,177 +428,85 @@ private:
     vert_middle_lines.push_back(
         cv::Point((clustered[2] + clustered[3]) / 2, y_vert_max));
     // draw middle lines
-    cv::line(img_cropped, horiz_middle_lines[0], horiz_middle_lines[1],
-             cv::Scalar(0, 0, 255), 1, 8);
-    cv::line(img_cropped, horiz_middle_lines[2], horiz_middle_lines[3],
-             cv::Scalar(0, 0, 255), 1, 8);
-    cv::line(img_cropped, vert_middle_lines[0], vert_middle_lines[1],
-             cv::Scalar(0, 0, 255), 1, 8);
-    cv::line(img_cropped, vert_middle_lines[2], vert_middle_lines[3],
-             cv::Scalar(0, 0, 255), 1, 8);
+    // cv::line(img_cropped, horiz_middle_lines[0], horiz_middle_lines[1],
+    //         cv::Scalar(0, 0, 255), 1, 8);
+    // cv::line(img_cropped, horiz_middle_lines[2], horiz_middle_lines[3],
+    //         cv::Scalar(0, 0, 255), 1, 8);
+    // cv::line(img_cropped, vert_middle_lines[0], vert_middle_lines[1],
+    //         cv::Scalar(0, 0, 255), 1, 8);
+    // cv::line(img_cropped, vert_middle_lines[2], vert_middle_lines[3],
+    //         cv::Scalar(0, 0, 255), 1, 8);
     // Find and Draw Intersections
     // top->right|bot_left->right
-    std::vector<cv::Point> grid_center_vertices;
-    grid_center_vertices.push_back(
+    grid_center_vertices_.push_back(
         find_lines_intersection(horiz_middle_lines[0], horiz_middle_lines[1],
                                 vert_middle_lines[0], vert_middle_lines[1]));
-    grid_center_vertices.push_back(
+    grid_center_vertices_.push_back(
         find_lines_intersection(horiz_middle_lines[0], horiz_middle_lines[1],
                                 vert_middle_lines[2], vert_middle_lines[3]));
-    grid_center_vertices.push_back(
+    grid_center_vertices_.push_back(
         find_lines_intersection(horiz_middle_lines[2], horiz_middle_lines[3],
                                 vert_middle_lines[0], vert_middle_lines[1]));
-    grid_center_vertices.push_back(
+    grid_center_vertices_.push_back(
         find_lines_intersection(horiz_middle_lines[2], horiz_middle_lines[3],
                                 vert_middle_lines[2], vert_middle_lines[3]));
-    cv::circle(img_cropped, grid_center_vertices[0], 3, cv::Scalar(0, 0, 255));
-    cv::circle(img_cropped, grid_center_vertices[1], 3, cv::Scalar(0, 0, 255));
-    cv::circle(img_cropped, grid_center_vertices[2], 3, cv::Scalar(0, 0, 255));
-    cv::circle(img_cropped, grid_center_vertices[3], 3, cv::Scalar(0, 0, 255));
+    // cv::circle(img_cropped, grid_center_vertices_[0], 3, cv::Scalar(0, 0,
+    // 255)); cv::circle(img_cropped, grid_center_vertices_[1], 3, cv::Scalar(0,
+    // 0, 255)); cv::circle(img_cropped, grid_center_vertices_[2], 3,
+    // cv::Scalar(0, 0, 255)); cv::circle(img_cropped, grid_center_vertices_[3],
+    // 3, cv::Scalar(0, 0, 255));
+
+    // CENTER SQUARE INFOS ################################################
 
     // calculate grid center
     cv::Point grid_center;
-    grid_center.x = (grid_center_vertices[0].x + grid_center_vertices[3].x) / 2;
-    grid_center.y = (grid_center_vertices[0].y + grid_center_vertices[3].y) / 2;
-    int center_square_width =
-        grid_center_vertices[3].x - grid_center_vertices[0].x;
-    int center_square_height =
-        grid_center_vertices[3].y - grid_center_vertices[0].y;
-    // calculate all 9 grid square centers
-    std::vector<cv::Point> square_centers;
-    square_centers.push_back(cv::Point(grid_center.x - center_square_width,
-                                       grid_center.y + center_square_height));
-    square_centers.push_back(
-        cv::Point(grid_center.x, grid_center.y + center_square_height));
-    square_centers.push_back(cv::Point(grid_center.x + center_square_width,
-                                       grid_center.y + center_square_height));
-    square_centers.push_back(
-        cv::Point(grid_center.x - center_square_width, grid_center.y));
-    square_centers.push_back(cv::Point(grid_center.x, grid_center.y));
-    square_centers.push_back(
-        cv::Point(grid_center.x + center_square_width, grid_center.y));
-    square_centers.push_back(cv::Point(grid_center.x - center_square_width,
-                                       grid_center.y - center_square_height));
-    square_centers.push_back(
-        cv::Point(grid_center.x, grid_center.y - center_square_height));
-    square_centers.push_back(cv::Point(grid_center.x + center_square_width,
-                                       grid_center.y - center_square_height));
-    // draw grid centers
-    for (auto &el : square_centers) {
-      cv::circle(img_cropped, el, 3, cv::Scalar(0, 255, 0));
+    grid_center.x =
+        (grid_center_vertices_[0].x + grid_center_vertices_[3].x) / 2;
+    grid_center.y =
+        (grid_center_vertices_[0].y + grid_center_vertices_[3].y) / 2;
+    center_square_width_ =
+        grid_center_vertices_[3].x - grid_center_vertices_[0].x;
+    center_square_height_ =
+        grid_center_vertices_[3].y - grid_center_vertices_[0].y;
+
+    // SHAPE DETECTION  ################################################
+
+    // square 1 contour process
+    // generate square ROI
+    cv::Rect square_roi = generate_square_roi(perception_params_.data[0], 5);
+
+    cv::Mat square = edges(square_roi);
+    cv::Mat color_square = img_cropped(square_roi);
+
+    // 1. Close gaps → merge fragments into ONE contour
+    cv::Mat kernel_cropped = cv::getStructuringElement(
+        cv::MORPH_ELLIPSE,
+        cv::Size(perception_params_.data[1], perception_params_.data[1]));
+    cv::morphologyEx(square, square, cv::MORPH_CLOSE, kernel_cropped);
+
+    // 2. Now find cropped_contours
+    std::vector<std::vector<cv::Point>> cropped_contours;
+    cv::findContours(square, cropped_contours, cv::RETR_EXTERNAL,
+                     cv::CHAIN_APPROX_SIMPLE);
+    // and Draw BIGGEST contour on the chosen square
+    double biggest_area = 0;
+    double biggest_area_index = 0;
+    for (size_t i = 0; i < cropped_contours.size(); i++) {
+      if (contourArea(cropped_contours[i]) > biggest_area) {
+        biggest_area = contourArea(cropped_contours[i]);
+        biggest_area_index = i;
+      }
     }
-    // draw rectangle areas around centers
-    for (size_t i = 0; i < square_centers.size(); i++) {
-      cv::rectangle(img_cropped,
-                    cv::Point(square_centers[static_cast<int>(i)].x -
-                                  (center_square_width / 2),
-                              square_centers[static_cast<int>(i)].y -
-                                  (center_square_height / 2)),
-                    cv::Point(square_centers[static_cast<int>(i)].x +
-                                  (center_square_width / 2),
-                              square_centers[static_cast<int>(i)].y +
-                                  (center_square_height / 2)),
-                    cv::Scalar(255, 0, 0), 1);
-    }
+    cv::drawContours(color_square, cropped_contours, biggest_area_index,
+                     cv::Scalar(0, 255, 0), 1);
+    RCLCPP_DEBUG(this->get_logger(), "contour area: %f", biggest_area);
 
-    cv::Mat cropped_gray;
-    cv::cvtColor(img_cropped, cropped_gray, cv::COLOR_BGR2GRAY);
-
-    std::vector<cv::KeyPoint> detected_shapes = detect_shapes(cropped_gray, 10);
-    print_detected_shapes(detected_shapes, img_cropped);
-
-    RCLCPP_INFO(this->get_logger(), "detected_shapes_size: %zu",
-                detected_shapes.size());
-    for (size_t i = 0; i < detected_shapes.size(); i++) {
-      RCLCPP_INFO(this->get_logger(), "detected_shapes[%zu]: YAH", i);
-    }
-
-    cv_ptr_->image = img_cropped;
+    cv_ptr_->image = color_square;
     cv_ptr_->encoding = "bgr8";
     roi_image_server_publisher_->publish(*cv_ptr_->toImageMsg());
 
-    // gridLines test
+    save_image(img_cropped, "teeeeest.png");
 
-    // cv_ptr_->image = processed_image;
-    // cv_ptr_->encoding = "mono8";
-    // cvtColor_server_publisher_->publish(*cv_ptr_->toImageMsg());
-
-    // cv::medianBlur(processed_image, processed_image, 11);
-    // cv_ptr_->image = image;
-    // no_shadow_server_publisher_->publish(*cv_ptr_->toImageMsg());
-    // cv::Canny(processed_image, processed_image, 100, 300, 3);
-
-    /*
-
-    std::vector<std::vector<float>> grid_lines =
-        detect_grid_lines(processed_image);
-    std::vector<float> grid_h = grid_lines[0];
-    std::vector<float> grid_v = grid_lines[1];
-
-    // check to avoid segmentation fault down the llline
-    if (grid_h.empty() || grid_v.empty()) {
-      RCLCPP_ERROR(this->get_logger(), "Grid detection failed");
-      return {cv::Mat(), std::vector<int>(9, 0)};
-    }
-
-    // detect and draw grid square centers
-    center_square_infos_ = calculate_center_square_infos(grid_v, grid_h);
-    grid_centers_ = calculate_all_grid_centers(center_square_infos_);
-
-
-
-    // shape detection
-    cv::Mat mser_image;
-    cv::cvtColor(image, mser_image, cv::COLOR_BGR2GRAY);
-    std::vector<cv::KeyPoint> detected_shapes = detect_shapes(mser_image, 60);
-
-    // Shape identification using template matching
-    cv::Mat match_image;
-    cv::cvtColor(image, match_image, cv::COLOR_BGR2GRAY);
-    auto pkg_share =
-        ament_index_cpp::get_package_share_directory("piper_moves");
-    std::string cross_templ_path =
-        pkg_share + "/templates/cross.png"; // cross-tpl
-    cv::Mat cross_templ = cv::imread(cross_templ_path);
-    cv::Mat cross_processed_templ;
-    cv::cvtColor(cross_templ, cross_processed_templ, cv::COLOR_BGR2GRAY);
-    std::string circle_templ_path =
-        pkg_share + "/templates/circle.png"; // circle-tpl
-    cv::Mat circle_templ = cv::imread(circle_templ_path);
-    cv::Mat circle_processed_templ;
-    cv::cvtColor(circle_templ, circle_processed_templ, cv::COLOR_BGR2GRAY);
-
-    // identify each shape (+ filter out shapes outside of grid squares)
-    for (size_t i = 0; i < detected_shapes.size(); i++) {
-      for (size_t j = 0; j < grid_centers_.size(); j++) {
-        // identify and store shape if close enough to one of the grid centers
-        if (detected_shapes[i].pt.x < grid_centers_[j].x + 60 &&
-            detected_shapes[i].pt.x > (grid_centers_[j].x - 60) &&
-            detected_shapes[i].pt.y < grid_centers_[j].y + 60 &&
-            detected_shapes[i].pt.y > (grid_centers_[j].y - 60)) {
-          int shape_id = determine_shape(2574 4051 4053 4110 4126 4111 4116
-              match_image, cross_processed_templ, circle_processed_templ, image,
-              cv::Point(detected_shapes[i].pt.x, detected_shapes[i].pt.y), i);
-          game_board_grid_state[j] = shape_id;
-          RCLCPP_INFO(this->get_logger(),
-                      "Shape N*: %zu is close enough to grid_center: %zu", i,
-                      j);
-          RCLCPP_INFO(
-              this->get_logger(),
-              "=> Shape_id: %d was stored in game_board_grid_state[%zu]",
-              shape_id, j);
-          break;
-        }
-      }
-    }
-
-    // image printings part
-     print_grid_lines(grid_h, grid_v, image);
-     print_grid_contours(image);
-     print_grid_centers(grid_centers_, image);
-     print_detected_shapes(detected_shapes, image);
-
-    */
     return std::pair<cv::Mat, std::vector<int>>(img_cropped,
                                                 game_board_grid_state);
   }
@@ -592,355 +524,7 @@ private:
       return;
     }
 
-    RCLCPP_INFO(this->get_logger(), "Image saved to %s", save_path.c_str());
-  }
-
-  std::vector<std::vector<float>> detect_grid_lines(cv::Mat image) {
-    // Apply ROI mask (center 70% to reduce edge noise)
-    int margin_x = image.cols * 0.15;
-    int margin_y = image.rows * 0.15;
-    cv::Rect roi(margin_x, margin_y, image.cols - 2 * margin_x,
-                 image.rows - 2 * margin_y);
-    cv::Mat roi_image = image(roi);
-
-    // Detect lines in ROI
-    std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(roi_image, lines, 1, (CV_PI / 180), 50, 50, 10);
-
-    // Offset coordinates back to full image
-    for (auto &l : lines) {
-      l[0] += margin_x;
-      l[1] += margin_y;
-      l[2] += margin_x;
-      l[3] += margin_y;
-    }
-
-    // Separate horizontal and vertical lines (store full line, not just avg)
-    std::vector<cv::Vec4i> h_lines_full, v_lines_full;
-    for (auto &l : lines) {
-      float angle = atan2(l[3] - l[1], l[2] - l[0]) * 180 / CV_PI;
-      if (abs(angle) < 20 || abs(angle) > 160) {
-        h_lines_full.push_back(l);
-      } else if (abs(angle - 90) < 20 || abs(angle + 90) < 20) {
-        v_lines_full.push_back(l);
-      }
-    }
-
-    // Find all line intersections
-    std::vector<cv::Point2f> intersections;
-    for (const auto &h : h_lines_full) {
-      for (const auto &v : v_lines_full) {
-        float x1 = h[0], y1 = h[1], x2 = h[2], y2 = h[3];
-        float x3 = v[0], y3 = v[1], x4 = v[2], y4 = v[3];
-
-        float denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-        if (abs(denom) < 1e-6)
-          continue;
-
-        float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
-
-        float px = x1 + t * (x2 - x1);
-        float py = y1 + t * (y2 - y1);
-        // Only keep intersections within image bounds
-        if (px >= 0 && px < image.cols && py >= 0 && py < image.rows) {
-          intersections.push_back(cv::Point2f(px, py));
-        }
-      }
-    }
-
-    // Cluster intersections (merge nearby points)
-    std::vector<cv::Point2f> clustered_intersections;
-    std::vector<bool> used(intersections.size(), false);
-    const float cluster_dist = 25.0f;
-
-    for (size_t i = 0; i < intersections.size(); i++) {
-      if (used[i])
-        continue;
-      float sum_x = intersections[i].x, sum_y = intersections[i].y;
-      int count = 1;
-      used[i] = true;
-
-      for (size_t j = i + 1; j < intersections.size(); j++) {
-        if (used[j])
-          continue;
-        if (cv::norm(intersections[i] - intersections[j]) < cluster_dist) {
-          sum_x += intersections[j].x;
-          sum_y += intersections[j].y;
-          count++;
-          used[j] = true;
-        }
-      }
-      clustered_intersections.push_back(
-          cv::Point2f(sum_x / count, sum_y / count));
-    }
-
-    if (clustered_intersections.size() < 4) {
-      RCLCPP_ERROR(this->get_logger(),
-                   "Not enough grid intersections detected");
-      return {{}, {}};
-    }
-
-    // Extract unique horizontal and vertical positions from intersections
-    std::vector<float> h_positions, v_positions;
-    for (const auto &pt : clustered_intersections) {
-      h_positions.push_back(pt.y);
-      v_positions.push_back(pt.x);
-    }
-
-    // Cluster positions to get unique lines
-    auto cluster_1d = [](std::vector<float> &vals, float tol) {
-      std::sort(vals.begin(), vals.end());
-      std::vector<float> result;
-      for (float v : vals) {
-        if (result.empty() || abs(v - result.back()) > tol) {
-          result.push_back(v);
-        }
-      }
-      return result;
-    };
-
-    h_positions = cluster_1d(h_positions, 30.0f);
-    v_positions = cluster_1d(v_positions, 30.0f);
-
-    // Score and select best pair (reasonable spacing + centered)
-    auto find_best_pair = [](std::vector<float> &positions, float min_spacing,
-                             float max_spacing, float img_center) {
-      std::vector<float> best_pair;
-      float best_score = -1;
-
-      for (size_t i = 0; i < positions.size(); i++) {
-        for (size_t j = i + 1; j < positions.size(); j++) {
-          float spacing = abs(positions[j] - positions[i]);
-          if (spacing >= min_spacing && spacing <= max_spacing) {
-            float center = (positions[i] + positions[j]) / 2.0f;
-            float img_center_dist = abs(center - img_center);
-            float score = spacing / (1 + img_center_dist * 0.01f);
-            if (score > best_score) {
-              best_score = score;
-              best_pair = {positions[i], positions[j]};
-            }
-          }
-        }
-      }
-      return best_pair;
-    };
-
-    std::vector<float> grid_h =
-        find_best_pair(h_positions, 80.0f, 300.0f, image.rows / 2.0f);
-    std::vector<float> grid_v =
-        find_best_pair(v_positions, 80.0f, 300.0f, image.cols / 2.0f);
-
-    return {grid_h, grid_v};
-  }
-
-  void print_grid_lines(std::vector<float> grid_h, std::vector<float> grid_v,
-                        cv::Mat image) {
-    // print clustered lines
-    for (auto &el : grid_h) {
-      cv::line(image, cv::Point(600, el), cv::Point(1250, el),
-               cv::Scalar(0, 0, 255), 3, 8);
-      RCLCPP_INFO(this->get_logger(), "Cluster h_line: %f", el);
-    }
-    for (auto &el : grid_v) {
-      cv::line(image, cv::Point(el, 300), cv::Point(el, 800),
-               cv::Scalar(0, 0, 255), 3, 8);
-      RCLCPP_INFO(this->get_logger(), "Cluster v_line: %f", el);
-    }
-  }
-
-  std::pair<std::array<float, 2>, cv::Point>
-  calculate_center_square_infos(std::vector<float> grid_v,
-                                std::vector<float> grid_h) {
-    // Calculate squares positions
-    // First: center square edges
-    cv::Point center_upper_left = cv::Point(grid_v[0], grid_h[0]);
-    cv::Point center_upper_right = cv::Point(grid_v[1], grid_h[0]);
-    cv::Point center_lower_left = cv::Point(grid_v[0], grid_h[1]);
-    // center square's center
-    float square_height = center_upper_left.y - center_lower_left.y;
-    float square_length = center_upper_right.x - center_upper_left.x;
-    cv::Point center = cv::Point(center_upper_right.x - square_length / 2,
-                                 center_upper_right.y - square_height / 2);
-    std::array<float, 2> dimensions = {square_height, square_length};
-    std::pair<std::array<float, 2>, cv::Point> center_grid_infos = {dimensions,
-                                                                    center};
-    return center_grid_infos;
-  }
-
-  void print_grid_contours(cv::Mat image) {
-    cv::rectangle(
-        image,
-        cv::Point(
-            center_square_infos_.second.x - center_square_infos_.first[1] * 2,
-            center_square_infos_.second.y - center_square_infos_.first[0] * 2),
-        cv::Point(
-            center_square_infos_.second.x + center_square_infos_.first[1] * 2,
-            center_square_infos_.second.y + center_square_infos_.first[0] * 2),
-        cv::Scalar(0, 0, 255), 1);
-  }
-
-  std::vector<cv::Point> calculate_all_grid_centers(
-      std::pair<std::array<float, 2>, cv::Point> center_square_infos) {
-    std::vector<cv::Point> grid_centers;
-
-    float center_x = center_square_infos.second.x;
-    float center_y = center_square_infos.second.y;
-    float square_height = center_square_infos.first[0];
-    float square_length = center_square_infos.first[1];
-
-    grid_centers.push_back(
-        cv::Point(center_x - square_length, center_y - square_height));
-    grid_centers.push_back(cv::Point(center_x, center_y - square_height));
-    grid_centers.push_back(
-        cv::Point(center_x + square_length, center_y - square_height));
-    grid_centers.push_back(cv::Point(center_x - square_length, center_y));
-    grid_centers.push_back(cv::Point(center_x, center_y));
-    grid_centers.push_back(cv::Point(center_x + square_length, center_y));
-    grid_centers.push_back(
-        cv::Point(center_x - square_length, center_y + square_height));
-    grid_centers.push_back(cv::Point(center_x, center_y + square_height));
-    grid_centers.push_back(
-        cv::Point(center_x + square_length, center_y + square_height));
-
-    return grid_centers;
-  }
-
-  void print_grid_centers(std::vector<cv::Point> grid_centers, cv::Mat image) {
-    for (size_t i = 0; i < grid_centers.size(); i++) {
-      cv::circle(image, grid_centers[i], 10, cv::Scalar(0, 0, 255));
-    }
-  }
-
-  std::vector<cv::KeyPoint> detect_shapes(cv::Mat image, float min_size) {
-    // MSER detector
-    cv::Ptr<cv::MSER> detector = cv::MSER::create();
-
-    std::vector<cv::KeyPoint> fs;
-    detector->detect(image, fs);
-
-    std::sort(fs.begin(), fs.end(),
-              [](const cv::KeyPoint &a, const cv::KeyPoint &b) {
-                return a.size > b.size; // descending
-              });
-
-    // filter by neighbours
-    std::vector<cv::KeyPoint> sfs;
-    sfs.reserve(fs.size());
-    for (const auto &x : fs) {
-      if (!suppressByLargerNearby(x, fs)) {
-        sfs.push_back(x);
-      }
-    }
-
-    // filter by min_size
-    std::vector<cv::KeyPoint> sized_sfs;
-    sized_sfs.reserve(sfs.size());
-    for (const auto &x : sfs) {
-      if (x.size > min_size) {
-        sized_sfs.push_back(x);
-      }
-    }
-
-    return sized_sfs;
-  }
-
-  static bool suppressByLargerNearby(const cv::KeyPoint &x,
-                                     const std::vector<cv::KeyPoint> &fs) {
-    for (const auto &f : fs) {
-      const float distx = f.pt.x - x.pt.x;
-      const float disty = f.pt.y - x.pt.y;
-      const float dist = std::sqrt(distx * distx + disty * disty);
-
-      if ((f.size > x.size) && (dist < f.size / 2.0f)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  void print_detected_shapes(std::vector<cv::KeyPoint> detected_shapes,
-                             cv::Mat image) {
-    const cv::Scalar d_red(65, 55, 150);   // BGR
-    const cv::Scalar l_red(200, 200, 250); // BGR
-
-    for (const auto &circle : detected_shapes) {
-      const cv::Point center(cvRound(circle.pt.x), cvRound(circle.pt.y));
-      const int radius = cvRound(circle.size / 2.0f);
-
-      cv::circle(image, center, radius / 5, d_red, 2, cv::LINE_AA);
-      cv::circle(image, center, radius / 5, l_red, 1, cv::LINE_AA);
-    }
-  }
-
-  int determine_shape(cv::Mat processed_image, cv::Mat cross_processed_templ,
-                      cv::Mat circle_processed_templ, cv::Mat image,
-                      cv::Point point_of_interest, int image_nb) {
-    // return unknown shape if no shape is recognized with template matching
-    int shape_type = -1;
-
-    // create a smaller matrix in the area the caller wants to
-    // check for cross/circle
-    cv::Point c = point_of_interest;
-    float square_height = std::abs(center_square_infos_.first[0]);
-    float square_length = std::abs(center_square_infos_.first[1]);
-    float res_x0 = c.x - square_length / 1.7;
-    float res_y0 = c.y - square_height / 1.7;
-    cv::Rect roi(res_x0, res_y0, square_length * 1.1, square_height * 1.1);
-    cv::Mat area_of_interest = processed_image(roi);
-
-    cv::Mat res;
-
-    // test each shape on the area of interest:
-    // cross first
-    cv::matchTemplate(area_of_interest, cross_processed_templ, res,
-                      cv::TM_CCOEFF_NORMED);
-
-    std::string file_name = "shape_" + std::to_string(image_nb) + ".jpg";
-    save_image(area_of_interest, file_name);
-
-    if (res.size.dims() > 0) {
-      // Threshold
-      const double threshold = 0.35;
-
-      // Find all locations with score >= threshold
-      for (int y = 0; y < res.rows; ++y) {
-        for (int x = 0; x < res.cols; ++x) {
-          float score = res.at<float>(y, x);
-          if (score >= threshold) {
-            cv::putText(image, "cross",
-                        cv::Point(res_x0 + x + square_length / 2,
-                                  res_y0 + y + square_height / 2),
-                        cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(0, 255, 0),
-                        1);
-            shape_type = 1;
-          }
-        }
-      }
-    }
-    // then circle
-    cv::matchTemplate(area_of_interest, circle_processed_templ, res,
-                      cv::TM_CCOEFF_NORMED);
-
-    if (res.size.dims() > 0) {
-      // Threshold
-      const double threshold = 0.34;
-
-      // Find all locations with score >= threshold
-      for (int y = 0; y < res.rows; ++y) {
-        for (int x = 0; x < res.cols; ++x) {
-          float score = res.at<float>(y, x);
-          if (score >= threshold) {
-            cv::circle(image,
-                       cv::Point(res_x0 + x + square_length / 2,
-                                 res_y0 + y + square_height / 2),
-                       40, cv::Scalar(0, 0, 255), 2);
-            shape_type = 2;
-          }
-        }
-      }
-    }
-
-    return shape_type;
+    RCLCPP_DEBUG(this->get_logger(), "Image saved to %s", save_path.c_str());
   }
 
   cv::Point find_lines_intersection(cv::Point x1_y1, cv::Point x2_y2,
@@ -962,6 +546,101 @@ private:
 
     RCLCPP_ERROR(this->get_logger(), "No intersection found");
     return intersection;
+  }
+
+  cv::Rect generate_square_roi(int square_index,
+                               int offset_from_center_vertice) {
+    cv::Rect square_roi;
+    switch (square_index) {
+    case 0:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[2].x - offset_from_center_vertice,
+                    grid_center_vertices_[2].y + offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[2].x - offset_from_center_vertice -
+                        center_square_width_,
+                    grid_center_vertices_[2].y + offset_from_center_vertice +
+                        center_square_height_));
+      break;
+
+    case 1:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[2].x + offset_from_center_vertice,
+                    grid_center_vertices_[2].y + offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[3].x - offset_from_center_vertice,
+                    grid_center_vertices_[3].y + offset_from_center_vertice +
+                        center_square_height_));
+      break;
+
+    case 2:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[3].x + offset_from_center_vertice,
+                    grid_center_vertices_[3].y + offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[3].x + offset_from_center_vertice +
+                        center_square_width_,
+                    grid_center_vertices_[3].y + offset_from_center_vertice +
+                        center_square_height_));
+      break;
+
+    case 3:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[0].x - offset_from_center_vertice,
+                    grid_center_vertices_[0].y + offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[2].x - offset_from_center_vertice -
+                        center_square_width_,
+                    grid_center_vertices_[2].y - offset_from_center_vertice));
+      break;
+
+    case 4:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[0].x + offset_from_center_vertice,
+                    grid_center_vertices_[0].y + offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[3].x - offset_from_center_vertice,
+                    grid_center_vertices_[3].y - offset_from_center_vertice));
+      break;
+
+    case 5:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[1].x + offset_from_center_vertice,
+                    grid_center_vertices_[1].y + offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[3].x + offset_from_center_vertice +
+                        center_square_width_,
+                    grid_center_vertices_[3].y - offset_from_center_vertice));
+      break;
+
+    case 6:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[0].x - offset_from_center_vertice,
+                    grid_center_vertices_[0].y - offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[0].x - offset_from_center_vertice -
+                        center_square_width_,
+                    grid_center_vertices_[0].y - offset_from_center_vertice -
+                        center_square_height_));
+      break;
+
+    case 7:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[0].x + offset_from_center_vertice,
+                    grid_center_vertices_[0].y - offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[1].x - offset_from_center_vertice,
+                    grid_center_vertices_[1].y - offset_from_center_vertice -
+                        center_square_height_));
+      break;
+
+    case 8:
+      square_roi = cv::Rect(
+          cv::Point(grid_center_vertices_[1].x + offset_from_center_vertice,
+                    grid_center_vertices_[1].y - offset_from_center_vertice),
+          cv::Point(grid_center_vertices_[1].x + offset_from_center_vertice +
+                        center_square_width_,
+                    grid_center_vertices_[1].y - offset_from_center_vertice -
+                        center_square_height_));
+      break;
+    }
+    if (square_roi.height < 0 || square_roi.width < 0 || square_roi.x < 0 ||
+        square_roi.y < 0) {
+      square_roi = cv::Rect(10, 10, 10, 10);
+    }
+    return square_roi;
   }
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
@@ -990,6 +669,9 @@ private:
   std_msgs::msg::Int32MultiArray current_game_board_squares_;
   bool order_done_;
   std_msgs::msg::Int32MultiArray perception_params_;
+  std::vector<cv::Point> grid_center_vertices_;
+  int center_square_width_;
+  int center_square_height_;
 };
 
 int main(int argc, char **argv) {
