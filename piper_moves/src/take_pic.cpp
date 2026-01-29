@@ -80,8 +80,22 @@ public:
         this->create_publisher<sensor_msgs::msg::Image>(
             "/roi_image_perception_server", 10);
 
+    // In constructor, add:
+    test_gray_publisher_ = this->create_publisher<sensor_msgs::msg::Image>(
+        "/test_gray_standard", 10);
+    test_saturation_publisher_ =
+        this->create_publisher<sensor_msgs::msg::Image>("/test_saturation", 10);
+    test_color_filter_publisher_ =
+        this->create_publisher<sensor_msgs::msg::Image>("/test_color_filter",
+                                                        10);
+
     // variables init
     perception_params_.data = {0, 3, 0};
+    squares_buffers_.resize(9);
+    grid_shapes_number_ = 0;
+    pipeline_occ_counter_ = 0;
+    pipeline_success_rate_ = 0.0;
+    pipeline_failures_ = 0;
   }
 
 private:
@@ -103,7 +117,7 @@ private:
   void listener_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
     // Analyse + output grid state
     if (!order_done_) {
-      RCLCPP_INFO(this->get_logger(), "Receiving image");
+      RCLCPP_DEBUG(this->get_logger(), "Receiving image");
 
       try {
         cv_ptr_ = cv_bridge::toCvCopy(msg, "bgr8");
@@ -115,19 +129,68 @@ private:
       cv_ptr_->encoding = "bgr8";
 
       current_game_board_ = percieve_game_board(cv_ptr_->image);
-      // save_image(current_game_board_.first, "captured_image.jpg");
-      // current_game_board_squares_.data = current_game_board_.second;
-      // order_response_publisher_->publish(current_game_board_squares_);
+      int game_board_quality = 1;
+
+      // print perceived grid
+      std::ostringstream oss;
+      oss << "current_game_grid: |";
+      for (const auto &el : current_game_board_.second) {
+        oss << el << "|";
+      }
+      RCLCPP_INFO(this->get_logger(), "%s", oss.str().c_str());
+
+      // check quality of game board analysis
+      for (auto &el : current_game_board_.second) {
+        if (el == -1) {
+          RCLCPP_ERROR(
+              this->get_logger(),
+              "Undefined || partially undefined current_game_board => not "
+              "publishing anything");
+          pipeline_failures_++;
+          break;
+        }
+      }
+      // Also check if the board has an additional shape in it, otherwise no
+      // publish
+      auto count_shapes = [](const std::vector<int> &cells) {
+        int c = 0;
+        for (int v : cells)
+          if (v > 0)
+            ++c;
+        return c;
+      };
+      int new_nb_grid_shapes = count_shapes(current_game_board_.second);
+      if (game_board_quality == 1 &&
+          (new_nb_grid_shapes - grid_shapes_number_) == 1) {
+        RCLCPP_INFO(
+            this->get_logger(),
+            "EXACTLY 1 more shape in the grid, publishing for MinMax Node...");
+        current_game_board_squares_.data = current_game_board_.second;
+        order_response_publisher_->publish(current_game_board_squares_);
+        grid_shapes_number_ = new_nb_grid_shapes;
+        order_done_ = true;
+      }
       cv_ptr_->image = current_game_board_.first;
       cv_ptr_->encoding = "bgr8";
       video_server_publisher_->publish(*cv_ptr_->toImageMsg());
-      // order_done_ = true;
+
+      pipeline_occ_counter_++;
+      RCLCPP_INFO(this->get_logger(), "pipeline_occ_counter_: %d",
+                  pipeline_occ_counter_);
+      RCLCPP_INFO(this->get_logger(), "pipeline_failures_: %d",
+                  pipeline_failures_);
+      pipeline_success_rate_ =
+          static_cast<double>(pipeline_occ_counter_ - pipeline_failures_) /
+          pipeline_occ_counter_;
+      RCLCPP_INFO(this->get_logger(), "Current Pipeline Success rate: %f",
+                  pipeline_success_rate_);
     }
   }
 
   std::pair<cv::Mat, std::vector<int>> percieve_game_board(cv::Mat image) {
     cv::Mat processed_image;
-    std::vector<int> game_board_grid_state(9, 0); // start grid with no shape
+    std::vector<int> game_board_grid_state(
+        9, -1); // start grid with undefined board squares
 
     grid_center_vertices_.clear();
 
@@ -157,7 +220,7 @@ private:
                      cv::CHAIN_APPROX_SIMPLE);
     RCLCPP_DEBUG(this->get_logger(), "Found %zu contours", contours.size());
     // find the tablet contour
-    double tablet_contour_index;
+    double tablet_contour_index = -1;
     for (size_t i = 0; i < contours.size(); i++) {
       if (cv::contourArea(contours[i]) > TABLET_CONTOUR_AREA_INTERVAL[0] &&
           cv::contourArea(contours[i]) < TABLET_CONTOUR_AREA_INTERVAL[1]) {
@@ -165,6 +228,16 @@ private:
       }
       RCLCPP_DEBUG(this->get_logger(), "contour[%zu].area: %f", i,
                    cv::contourArea(contours[i]));
+    }
+    if (tablet_contour_index == -1) {
+      RCLCPP_ERROR(this->get_logger(), "No tablet Contour found, returning...");
+      cv_ptr_->image = image;
+      cv_ptr_->encoding = "bgr8";
+      roi_image_server_publisher_->publish(*cv_ptr_->toImageMsg());
+
+      save_image(image, "teeeeest.png");
+
+      return std::pair<cv::Mat, std::vector<int>>(image, game_board_grid_state);
     }
     // find the two extremities of the tablet to crop the image accordingly
     int x_start = 1000, y_start = 1000, x_end = 0, y_end = 0, width = 0,
@@ -257,9 +330,34 @@ private:
 
     // FOR Grid LINES Adaptive Canny TESTTT ###############################
 
-    cv::Mat processed_imaged;
-    cv::cvtColor(img_cropped, processed_imaged, cv::COLOR_BGR2GRAY);
+    RCLCPP_DEBUG(this->get_logger(), "GOT TO LINE DETEC");
 
+    cv::Mat processed_imaged;
+    // Standard grayscale
+    cv::Mat gray_standard;
+    cv::cvtColor(img_cropped, gray_standard, cv::COLOR_BGR2GRAY);
+
+    // Convert to HSV
+    cv::Mat hsv_image;
+    cv::cvtColor(img_cropped, hsv_image, cv::COLOR_BGR2HSV);
+
+    // Split channels
+    std::vector<cv::Mat> hsv_channels;
+    cv::split(hsv_image, hsv_channels);
+
+    // Try Value channel first (most similar to grayscale)
+    processed_imaged = hsv_channels[2].clone();
+
+    // Publish for debugging
+    cv_ptr_->image = hsv_channels[2]; // V channel
+    cv_ptr_->encoding = "mono8";
+    test_gray_publisher_->publish(*cv_ptr_->toImageMsg());
+
+    cv_ptr_->image = hsv_channels[1]; // S channel
+    cv_ptr_->encoding = "mono8";
+    test_saturation_publisher_->publish(*cv_ptr_->toImageMsg());
+
+    // Continue with Gaussian blur and Canny...
     cv::GaussianBlur(processed_imaged, processed_imaged, cv::Size(5, 5), 0);
 
     // Get median pixel for adaptive Canny Thresholds
@@ -351,8 +449,11 @@ private:
       //          cv::Point(clustered[3], y_vert_max), cv::Scalar(0, 0, 255), 1,
       //          8);
     } else {
-      RCLCPP_ERROR(this->get_logger(), "Not enough clustered lines: %zu",
+      RCLCPP_ERROR(this->get_logger(),
+                   "Wrong vertical clustered lines Count: %zu. Returning..",
                    clustered.size());
+      return std::pair<cv::Mat, std::vector<int>>(img_cropped,
+                                                  game_board_grid_state);
     }
 
     // Calculate and Draw Horizontal lines
@@ -404,8 +505,11 @@ private:
       //          cv::Point(x_horiz_max, h_clustered[3]), cv::Scalar(0, 0, 255),
       //          1, 8);
     } else {
-      RCLCPP_ERROR(this->get_logger(), "Not enough h_clustered lines: %zu",
-                   h_clustered.size());
+      RCLCPP_ERROR(this->get_logger(),
+                   "Wrong horizontal clustered lines Count: %zu. Returning..",
+                   clustered.size());
+      return std::pair<cv::Mat, std::vector<int>>(img_cropped,
+                                                  game_board_grid_state);
     }
 
     // Calculate middle lines
@@ -428,14 +532,14 @@ private:
     vert_middle_lines.push_back(
         cv::Point((clustered[2] + clustered[3]) / 2, y_vert_max));
     // draw middle lines
-    // cv::line(img_cropped, horiz_middle_lines[0], horiz_middle_lines[1],
-    //         cv::Scalar(0, 0, 255), 1, 8);
-    // cv::line(img_cropped, horiz_middle_lines[2], horiz_middle_lines[3],
-    //         cv::Scalar(0, 0, 255), 1, 8);
-    // cv::line(img_cropped, vert_middle_lines[0], vert_middle_lines[1],
-    //         cv::Scalar(0, 0, 255), 1, 8);
-    // cv::line(img_cropped, vert_middle_lines[2], vert_middle_lines[3],
-    //         cv::Scalar(0, 0, 255), 1, 8);
+    cv::line(img_cropped, horiz_middle_lines[0], horiz_middle_lines[1],
+             cv::Scalar(0, 0, 255), 1, 8);
+    cv::line(img_cropped, horiz_middle_lines[2], horiz_middle_lines[3],
+             cv::Scalar(0, 0, 255), 1, 8);
+    cv::line(img_cropped, vert_middle_lines[0], vert_middle_lines[1],
+             cv::Scalar(0, 0, 255), 1, 8);
+    cv::line(img_cropped, vert_middle_lines[2], vert_middle_lines[3],
+             cv::Scalar(0, 0, 255), 1, 8);
     // Find and Draw Intersections
     // top->right|bot_left->right
     grid_center_vertices_.push_back(
@@ -450,11 +554,10 @@ private:
     grid_center_vertices_.push_back(
         find_lines_intersection(horiz_middle_lines[2], horiz_middle_lines[3],
                                 vert_middle_lines[2], vert_middle_lines[3]));
-    // cv::circle(img_cropped, grid_center_vertices_[0], 3, cv::Scalar(0, 0,
-    // 255)); cv::circle(img_cropped, grid_center_vertices_[1], 3, cv::Scalar(0,
-    // 0, 255)); cv::circle(img_cropped, grid_center_vertices_[2], 3,
-    // cv::Scalar(0, 0, 255)); cv::circle(img_cropped, grid_center_vertices_[3],
-    // 3, cv::Scalar(0, 0, 255));
+    cv::circle(img_cropped, grid_center_vertices_[0], 3, cv::Scalar(0, 0, 255));
+    cv::circle(img_cropped, grid_center_vertices_[1], 3, cv::Scalar(0, 0, 255));
+    cv::circle(img_cropped, grid_center_vertices_[2], 3, cv::Scalar(0, 0, 255));
+    cv::circle(img_cropped, grid_center_vertices_[3], 3, cv::Scalar(0, 0, 255));
 
     // CENTER SQUARE INFOS ################################################
 
@@ -469,43 +572,63 @@ private:
     center_square_height_ =
         grid_center_vertices_[3].y - grid_center_vertices_[0].y;
 
-    // SHAPE DETECTION  ################################################
+    // SHAPE DETECTIONS  ################################################
 
-    // square 1 contour process
-    // generate square ROI
-    cv::Rect square_roi = generate_square_roi(perception_params_.data[0], 5);
+    for (int i = 0; i < 9; i++) {
+      RCLCPP_DEBUG(this->get_logger(), "At step %d in the shape detec loop", i);
+      // square 1 contour process
+      // generate square ROI
+      cv::Rect square_roi = generate_square_roi(i, 5, 5, 1, 1, 6);
 
-    cv::Mat square = edges(square_roi);
-    cv::Mat color_square = img_cropped(square_roi);
-
-    // 1. Close gaps → merge fragments into ONE contour
-    cv::Mat kernel_cropped = cv::getStructuringElement(
-        cv::MORPH_ELLIPSE,
-        cv::Size(perception_params_.data[1], perception_params_.data[1]));
-    cv::morphologyEx(square, square, cv::MORPH_CLOSE, kernel_cropped);
-
-    // 2. Now find cropped_contours
-    std::vector<std::vector<cv::Point>> cropped_contours;
-    cv::findContours(square, cropped_contours, cv::RETR_EXTERNAL,
-                     cv::CHAIN_APPROX_SIMPLE);
-    // and Draw BIGGEST contour on the chosen square
-    double biggest_area = 0;
-    double biggest_area_index = 0;
-    for (size_t i = 0; i < cropped_contours.size(); i++) {
-      if (contourArea(cropped_contours[i]) > biggest_area) {
-        biggest_area = contourArea(cropped_contours[i]);
-        biggest_area_index = i;
+      if (!clampRectToMat(edges, square_roi)) {
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Invalid ROI for square %d: x=%d y=%d w=%d h=%d (img %dx%d)", i,
+            square_roi.x, square_roi.y, square_roi.width, square_roi.height,
+            edges.cols, edges.rows);
+        game_board_grid_state[i] = -1; // or 0
+        continue;
       }
+
+      cv::Mat square = edges(square_roi);
+      cv::Mat color_square = img_cropped(square_roi);
+
+      int shape_id = -1;
+
+      // draw biggest contour if one was detected
+      std::vector<cv::Point> biggest_contour = find_biggest_contour(square);
+      if (static_cast<int>(biggest_contour.size()) > 0) {
+        std::vector<std::vector<cv::Point>> tmp{biggest_contour};
+        cv::drawContours(color_square, tmp, 0,
+                         cv::Scalar(0, 127, 127 + pow(-1, i) * 127), 1);
+        // detect shape
+        shape_id = detect_shape(biggest_contour);
+
+        // Buffer analysis based on votes for the current square
+        squares_buffers_[i].push_front(shape_id);
+        print_buffer(squares_buffers_[i]);
+
+        if (squares_buffers_[i].size() > 10) {
+          squares_buffers_[i].pop_back();
+        }
+        // Vote oftennn, with adaptive thresh
+        int min_buffer_size = 5;
+        if (static_cast<int>(squares_buffers_[i].size()) >= min_buffer_size) {
+          // Dynamic vote threshold
+          int required_votes =
+              std::max(3, static_cast<int>(squares_buffers_[i].size() * 0.6));
+          int vote = get_buffer_vote(squares_buffers_[i], required_votes);
+          shape_id = vote;
+        } else {
+          shape_id = -1;
+        }
+      } else {
+        RCLCPP_DEBUG(this->get_logger(), "No Shape (no contours)");
+        shape_id = 0;
+      }
+      draw_detected_shape(color_square, shape_id);
+      game_board_grid_state[i] = shape_id;
     }
-    cv::drawContours(color_square, cropped_contours, biggest_area_index,
-                     cv::Scalar(0, 255, 0), 1);
-    RCLCPP_DEBUG(this->get_logger(), "contour area: %f", biggest_area);
-
-    cv_ptr_->image = color_square;
-    cv_ptr_->encoding = "bgr8";
-    roi_image_server_publisher_->publish(*cv_ptr_->toImageMsg());
-
-    save_image(img_cropped, "teeeeest.png");
 
     return std::pair<cv::Mat, std::vector<int>>(img_cropped,
                                                 game_board_grid_state);
@@ -527,29 +650,28 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "Image saved to %s", save_path.c_str());
   }
 
-  cv::Point find_lines_intersection(cv::Point x1_y1, cv::Point x2_y2,
-                                    cv::Point x3_y3, cv::Point x4_y4) {
-    cv::Point intersection;
-    float x1 = x1_y1.x, y1 = x1_y1.y, x2 = x2_y2.x, y2 = x2_y2.y, x3 = x3_y3.x,
-          y3 = x3_y3.y, x4 = x4_y4.x, y4 = x4_y4.y;
+  cv::Point find_lines_intersection(cv::Point a1, cv::Point a2, cv::Point b1,
+                                    cv::Point b2) {
+    float x1 = a1.x, y1 = a1.y, x2 = a2.x, y2 = a2.y;
+    float x3 = b1.x, y3 = b1.y, x4 = b2.x, y4 = b2.y;
 
-    float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) /
-              ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4));
-    float u = -(((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) /
-                ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)));
+    float denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (std::abs(denom) < 1e-6f)
+      return {-1, -1};
 
-    if (0 <= t && t <= 1 && 0 <= u && u <= 1) {
-      intersection.x = x1 + t * (x2 - x1);
-      intersection.y = y1 + t * (y2 - y1);
-      return intersection;
-    }
+    float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+    float u = -(((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom);
 
-    RCLCPP_ERROR(this->get_logger(), "No intersection found");
-    return intersection;
+    if (t < 0.f || t > 1.f || u < 0.f || u > 1.f)
+      return {-1, -1};
+
+    return {static_cast<int>(x1 + t * (x2 - x1)),
+            static_cast<int>(y1 + t * (y2 - y1))};
   }
 
-  cv::Rect generate_square_roi(int square_index,
-                               int offset_from_center_vertice) {
+  cv::Rect generate_square_roi(int square_index, int offset_from_center_vertice,
+                               int corners_additional_area, int center_offset,
+                               int sides_offset, int sides_length_offset) {
     cv::Rect square_roi;
     switch (square_index) {
     case 0:
@@ -557,18 +679,18 @@ private:
           cv::Point(grid_center_vertices_[2].x - offset_from_center_vertice,
                     grid_center_vertices_[2].y + offset_from_center_vertice),
           cv::Point(grid_center_vertices_[2].x - offset_from_center_vertice -
-                        center_square_width_,
+                        center_square_width_ - corners_additional_area,
                     grid_center_vertices_[2].y + offset_from_center_vertice +
-                        center_square_height_));
+                        center_square_height_ + corners_additional_area));
       break;
 
     case 1:
-      square_roi = cv::Rect(
-          cv::Point(grid_center_vertices_[2].x + offset_from_center_vertice,
-                    grid_center_vertices_[2].y + offset_from_center_vertice),
-          cv::Point(grid_center_vertices_[3].x - offset_from_center_vertice,
-                    grid_center_vertices_[3].y + offset_from_center_vertice +
-                        center_square_height_));
+      square_roi =
+          cv::Rect(cv::Point(grid_center_vertices_[2].x + sides_offset,
+                             grid_center_vertices_[2].y + sides_offset),
+                   cv::Point(grid_center_vertices_[3].x - sides_offset,
+                             grid_center_vertices_[3].y + sides_offset +
+                                 center_square_height_ + sides_length_offset));
       break;
 
     case 2:
@@ -576,35 +698,35 @@ private:
           cv::Point(grid_center_vertices_[3].x + offset_from_center_vertice,
                     grid_center_vertices_[3].y + offset_from_center_vertice),
           cv::Point(grid_center_vertices_[3].x + offset_from_center_vertice +
-                        center_square_width_,
+                        center_square_width_ + corners_additional_area,
                     grid_center_vertices_[3].y + offset_from_center_vertice +
-                        center_square_height_));
+                        center_square_height_ + corners_additional_area));
       break;
 
     case 3:
-      square_roi = cv::Rect(
-          cv::Point(grid_center_vertices_[0].x - offset_from_center_vertice,
-                    grid_center_vertices_[0].y + offset_from_center_vertice),
-          cv::Point(grid_center_vertices_[2].x - offset_from_center_vertice -
-                        center_square_width_,
-                    grid_center_vertices_[2].y - offset_from_center_vertice));
+      square_roi =
+          cv::Rect(cv::Point(grid_center_vertices_[0].x - sides_offset,
+                             grid_center_vertices_[0].y + sides_offset),
+                   cv::Point(grid_center_vertices_[2].x - sides_offset -
+                                 center_square_width_ - sides_length_offset,
+                             grid_center_vertices_[2].y - sides_offset));
       break;
 
     case 4:
-      square_roi = cv::Rect(
-          cv::Point(grid_center_vertices_[0].x + offset_from_center_vertice,
-                    grid_center_vertices_[0].y + offset_from_center_vertice),
-          cv::Point(grid_center_vertices_[3].x - offset_from_center_vertice,
-                    grid_center_vertices_[3].y - offset_from_center_vertice));
+      square_roi =
+          cv::Rect(cv::Point(grid_center_vertices_[0].x + center_offset,
+                             grid_center_vertices_[0].y + center_offset),
+                   cv::Point(grid_center_vertices_[3].x - center_offset,
+                             grid_center_vertices_[3].y - center_offset));
       break;
 
     case 5:
-      square_roi = cv::Rect(
-          cv::Point(grid_center_vertices_[1].x + offset_from_center_vertice,
-                    grid_center_vertices_[1].y + offset_from_center_vertice),
-          cv::Point(grid_center_vertices_[3].x + offset_from_center_vertice +
-                        center_square_width_,
-                    grid_center_vertices_[3].y - offset_from_center_vertice));
+      square_roi =
+          cv::Rect(cv::Point(grid_center_vertices_[1].x + sides_offset,
+                             grid_center_vertices_[1].y + sides_offset),
+                   cv::Point(grid_center_vertices_[3].x + sides_offset +
+                                 center_square_width_ + sides_length_offset,
+                             grid_center_vertices_[3].y - sides_offset));
       break;
 
     case 6:
@@ -612,18 +734,18 @@ private:
           cv::Point(grid_center_vertices_[0].x - offset_from_center_vertice,
                     grid_center_vertices_[0].y - offset_from_center_vertice),
           cv::Point(grid_center_vertices_[0].x - offset_from_center_vertice -
-                        center_square_width_,
+                        center_square_width_ - corners_additional_area,
                     grid_center_vertices_[0].y - offset_from_center_vertice -
-                        center_square_height_));
+                        center_square_height_ - corners_additional_area));
       break;
 
     case 7:
-      square_roi = cv::Rect(
-          cv::Point(grid_center_vertices_[0].x + offset_from_center_vertice,
-                    grid_center_vertices_[0].y - offset_from_center_vertice),
-          cv::Point(grid_center_vertices_[1].x - offset_from_center_vertice,
-                    grid_center_vertices_[1].y - offset_from_center_vertice -
-                        center_square_height_));
+      square_roi =
+          cv::Rect(cv::Point(grid_center_vertices_[0].x + sides_offset,
+                             grid_center_vertices_[0].y - sides_offset),
+                   cv::Point(grid_center_vertices_[1].x - sides_offset,
+                             grid_center_vertices_[1].y - sides_offset -
+                                 center_square_height_ - sides_length_offset));
       break;
 
     case 8:
@@ -631,9 +753,9 @@ private:
           cv::Point(grid_center_vertices_[1].x + offset_from_center_vertice,
                     grid_center_vertices_[1].y - offset_from_center_vertice),
           cv::Point(grid_center_vertices_[1].x + offset_from_center_vertice +
-                        center_square_width_,
+                        center_square_width_ + corners_additional_area,
                     grid_center_vertices_[1].y - offset_from_center_vertice -
-                        center_square_height_));
+                        center_square_height_ - corners_additional_area));
       break;
     }
     if (square_roi.height < 0 || square_roi.width < 0 || square_roi.x < 0 ||
@@ -641,6 +763,123 @@ private:
       square_roi = cv::Rect(10, 10, 10, 10);
     }
     return square_roi;
+  }
+
+  std::vector<cv::Point> find_biggest_contour(cv::Mat square_of_interest) {
+    std::vector<std::vector<cv::Point>> contours;
+
+    // 1. Close gaps → merge fragments into ONE contour
+    cv::Mat kernel_cropped =
+        cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(9, 9));
+    cv::morphologyEx(square_of_interest, square_of_interest, cv::MORPH_CLOSE,
+                     kernel_cropped);
+
+    // 2. Now find contours
+    cv::findContours(square_of_interest, contours, cv::RETR_EXTERNAL,
+                     cv::CHAIN_APPROX_SIMPLE);
+
+    // If no contours found, no shape !
+    if (contours.size() == 0) {
+      return std::vector<cv::Point>();
+    }
+
+    // If come contours, draw BIGGEST contour on the chosen square
+    double biggest_area = 0;
+    double biggest_area_index = 0;
+
+    for (size_t i = 0; i < contours.size(); i++) {
+      if (cv::contourArea(contours[i]) > biggest_area) {
+        biggest_area = cv::contourArea(contours[i]);
+        biggest_area_index = i;
+      }
+    }
+
+    RCLCPP_DEBUG(this->get_logger(), "biggest contour area: %f", biggest_area);
+    return contours[biggest_area_index];
+  }
+
+  int detect_shape(std::vector<cv::Point> contour) {
+    double area = cv::contourArea(contour);
+    if (area < 50) {
+      RCLCPP_DEBUG(this->get_logger(), "No Shape");
+      return 0;
+    }
+
+    // Calculate solidity (area / convex hull area)
+    std::vector<cv::Point> hull;
+    cv::convexHull(contour, hull);
+    double hull_area = cv::contourArea(hull);
+    double solidity = area / hull_area;
+
+    RCLCPP_DEBUG(this->get_logger(), "solidity: %.2f", solidity);
+
+    if (solidity < 0.85) {
+      RCLCPP_DEBUG(this->get_logger(), "Cross");
+      return 1;
+    } else if (solidity > 0.9) {
+      RCLCPP_DEBUG(this->get_logger(), "Circle");
+      return 2;
+    } else {
+      RCLCPP_DEBUG(this->get_logger(), "Uncertain");
+      return -1;
+    }
+  }
+
+  void print_buffer(const std::deque<int> &buffer) {
+    std::ostringstream oss;
+    oss << "buffer: |";
+
+    for (const auto &el : buffer) {
+      oss << el << "|";
+    }
+    RCLCPP_INFO(this->get_logger(), "%s", oss.str().c_str());
+  }
+
+  int get_buffer_vote(const std::deque<int> &buffer, int acceptance_threshold) {
+    std::map<int, int> vote_counts;
+
+    // Count all shape occurrences
+    for (const auto &el : buffer) {
+      if (el != -1) { // Ignore uncertain detections
+        vote_counts[el]++;
+      }
+    }
+
+    // Find the shape with the most votes
+    int best_shape = -1;
+    int max_votes = 0;
+    for (const auto &[shape, count] : vote_counts) {
+      if (count >= acceptance_threshold && count > max_votes) {
+        max_votes = count;
+        best_shape = shape;
+      }
+    }
+
+    return best_shape;
+  }
+
+  void draw_detected_shape(cv::Mat &img, int shape_id) {
+    const char *text = (shape_id == 2)   ? "O"
+                       : (shape_id == 1) ? "X"
+                       : (shape_id == 0) ? "-"
+                                         : "?";
+
+    int font = cv::FONT_HERSHEY_PLAIN;
+    double scale = 0.8;
+    int thickness = 1;
+    cv::Point org((img.cols) / 2, (img.rows) / 2);
+    cv::Scalar color = (shape_id == 2 || shape_id == 1)
+                           ? cv::Scalar(255, 255, 255)
+                       : (shape_id == 0) ? cv::Scalar(0, 255, 0)
+                                         : cv::Scalar(0, 0, 255);
+
+    cv::putText(img, text, org, font, scale, color, thickness, cv::LINE_AA);
+  }
+
+  static bool clampRectToMat(const cv::Mat &m, cv::Rect &r) {
+    cv::Rect bounds(0, 0, m.cols, m.rows);
+    r &= bounds; // intersection
+    return r.width > 0 && r.height > 0;
   }
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
@@ -672,6 +911,20 @@ private:
   std::vector<cv::Point> grid_center_vertices_;
   int center_square_width_;
   int center_square_height_;
+  std::vector<std::deque<int>>
+      squares_buffers_; // buffers for more reliable square shape detection
+  int grid_shapes_number_;
+  // % of perception pipeline failure
+  int pipeline_occ_counter_;
+  int pipeline_failures_;
+  double pipeline_success_rate_;
+  // additional pubs
+  // In constructor, add:
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr test_gray_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      test_saturation_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      test_color_filter_publisher_;
 };
 
 int main(int argc, char **argv) {

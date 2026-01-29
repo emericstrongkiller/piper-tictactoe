@@ -4,7 +4,6 @@
     <title>My first web page for ROS!</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css"
         integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
-
     <!-- VueJS lib -->
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
     <!-- Lib ROSBridge !-->
@@ -14,54 +13,37 @@
     <script type="text/javascript" src="./libs/mjpegcanvas.min.js"></script>
 </head>
 
-<body class="d-flex flex-column h-100">
+<body class="d-flex  h-100">
     <!-- header of the page -->
     <header class="header">
         <div class="container">
-            <div class="jumbotron text-center">
-                <h1>Hello from Robot Ignite Academy!</h1>
-                <p>Let's connect our website to a ROS robot!</p>
+            <div>
+                <h1>Piper TicTacToe Webpage!</h1>
+                <p>Let's confront humans and machines</p>
             </div>
         </div>
     </header>
 
     <!-- main content -->
     <main id="vueApp">
-        <div class="container">
-            <div class="row">
-                <div class="col-md-4">
-                    <div class="card">
-                        <div class="card-body">
-                            <h3>{{ menu_title }}</h3>
-                            <hr>
-                            <label>ROSBridge address</label>
-                            <br>
-                            <input type="text" v-model="rosbridge_address" />
-                            <br>
-                            <button class="mt-2 btn btn-success" v-if="connected"
-                                @click="disconnect">Connected!</button>
-                            <button class="mt-2 btn btn-primary" v-else @click="connect">Connect!</button>
-                        </div>
+        <!-- Tic Tac Toe Board -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <h4 class="text-center">Tic Tac Toe Board</h4>
+                <div class="tictactoe-grid">
+                    <div v-for="(cell, index) in game_board_state" :key="index" class="grid-cell">
+                        <div v-if="cell === 0" class="empty-cell"></div>
+                        <img v-else-if="cell === 1" src="./images/cross.png" class="shape-img" alt="X" />
+                        <img v-else-if="cell === 2" src="./images/circle.png" class="shape-img" alt="O" />
+                        <div v-else class="undefined-cell">?</div>
                     </div>
                 </div>
-                <div class="col-md-8">
-                    <div class="card">
-                        <div class="card-body">
-                            <h2 class="text-center">{{ main_title }}</h2>
-                            <hr>
-                            <p>Some actions for the robot</p>
-                            <button class="mt-2 btn btn-primary" :disabled="!connected" @click="goToPos">Move the
-                                robot!</button>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-12 text-center">
-                    <div class="card">
-                        /cvtColor_perception_server
-                        <div id="divCamera2"></div>
-                    </div>
-                </div>
+
+                <!-- Debug info -->
+                <p class="text-center">Raw state: {{ game_board_state }}</p>
             </div>
+        </div>
+        <div class="container">
             <div class="row">
                 <!-- Perception choice -->
                 <select id="video_server_" v-model="video_server">
@@ -71,6 +53,9 @@
                     <option value="/no_shadow_perception_server">no_shadow_perception_server</option>
                     <option value="/binary_image_perception_server">binary_image_perception_server</option>
                     <option value="/roi_image_perception_server">roi_image_perception_server</option>
+                    <option value="/test_gray_standard">test_gray_standard</option>
+                    <option value="/test_saturation">test_saturation</option>
+                    <option value="/test_color_filter">test_color_filter</option>
                 </select>
                 <!-- Parameter slider -->
                 <div class="slidecontainer">
@@ -98,14 +83,6 @@
                         <div id="divCamera"></div>
                     </div>
                 </div>
-                <!--
-                <div class="col-md-6 text-center">
-                    <div class="card">
-                        Camera2
-                        <div id="divCamera2"></div>
-                    </div>
-                </div>
-                -->
                 <div class="col-md-6 text-center">
                     <div class="card">
                         <h4>Piper Positions</h4>
@@ -171,3 +148,43 @@
 </body>
 
 </html>
+
+
+<style>
+    .tictactoe-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 100px);
+        grid-template-rows: repeat(3, 100px);
+        gap: 5px;
+        margin: 20px auto;
+        width: fit-content;
+        background-color: #333;
+        padding: 5px;
+        border-radius: 10px;
+    }
+
+    .grid-cell {
+        background-color: #191919;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 2px solid #333;
+        border-radius: 5px;
+    }
+
+    .shape-img {
+        width: 80%;
+        height: 80%;
+        object-fit: contain;
+    }
+
+    .empty-cell {
+        font-size: 30px;
+        color: #ccc;
+    }
+
+    .undefined-cell {
+        font-size: 30px;
+        color: red;
+    }
+</style>

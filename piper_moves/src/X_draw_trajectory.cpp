@@ -243,7 +243,7 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_circle_pose_targets(double retract_amount = 0.013,
+  generate_circle_pose_targets(double retract_amount = 0.015,
                                double radius = 0.015,
                                double nb_waypoints = 200) {
     std::vector<geometry_msgs::msg::Pose> targets;
@@ -283,7 +283,7 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_cross_pose_targets(double retract_amount = 0.013,
+  generate_cross_pose_targets(double retract_amount = 0.015,
                               double square_size = 0.03) {
     std::vector<geometry_msgs::msg::Pose> targets;
     piper_curr_pos_ = piper_interface_->getCurrentPose();
@@ -338,7 +338,7 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_grid_pose_targets(double retract_amount = 0.013,
+  generate_grid_pose_targets(double retract_amount = 0.015,
                              double grid_size = 0.12) {
     std::vector<geometry_msgs::msg::Pose> targets;
     piper_curr_pos_ = piper_interface_->getCurrentPose();

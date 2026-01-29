@@ -3,7 +3,7 @@ let vueApp = new Vue({
     data: {
         // ros connection
         ros: null,
-        rosbridge_address: 'wss://i-02d1dc2e3ad1472a8.robotigniteacademy.com/3ae217f3-b080-459a-af01-f524c269e0b0/rosbridge/',
+        rosbridge_address: 'wss://i-04af627575c17c6bc.robotigniteacademy.com/f1d7937a-f8c4-4c78-b393-1539f6a4b3d2/rosbridge/',
         connected: false,
         // page content
         menu_title: 'My menu title',
@@ -18,6 +18,8 @@ let vueApp = new Vue({
         slider_val: 0,
         slider2_val: 3,
         slider3_val: 0,
+        // board state
+        game_board_state: [1, 2, 0, 0, 1, 2, 0, 0, 1],
     },
     methods: {
         connect: function() {
@@ -39,6 +41,8 @@ let vueApp = new Vue({
                 console.log('Connection to ROSBridge established!')
                 // Camera
                 this.setCameras()
+                // Subscribe to game board
+                this.GetGameBoard()
             })
             this.ros.on('error', (error) => {
                 console.log('Something went wrong when trying to connect')
@@ -80,31 +84,17 @@ let vueApp = new Vue({
               document.getElementById("divCamera").innerHTML = ""
               this.viewer = null
             }
-            if (this.viewer2) {
-              document.getElementById("divCamera2").innerHTML = ""
-              this.viewer2 = null
-            }
-
             let without_wss = this.rosbridge_address.split('wss://')[1]
             console.log(without_wss)
             let domain = without_wss.split('/')[0] + '/' + without_wss.split('/')[1]
             console.log(domain)
             let host = domain + '/cameras'
-            this.viewer2 = new MJPEGCANVAS.Viewer({
-                divID: 'divCamera2',
-                host: host,
-                width: 1920,
-                height: 1080,
-                topic: '/camera/D435/color/image_raw',
-                ssl: true,
-            })
             this.viewer = new MJPEGCANVAS.Viewer({
                 divID: 'divCamera',
                 host: host,
                 width: 1400,
                 height: 1080,
                 topic: this.video_server,
-                //topic: '/camera1/image_raw',
                 ssl: true,
             })
         },
@@ -117,6 +107,17 @@ let vueApp = new Vue({
 
             let message = new ROSLIB.Message({data: [Number(slider), Number(slider2), Number(slider3)]})
             topic.publish(message)
+        },
+        GetGameBoard: function() {
+        let topic = new ROSLIB.Topic({
+            ros: this.ros,
+            name: '/take_pic_order_response',
+            messageType: 'std_msgs/msg/Int32MultiArray'
+        })
+        topic.subscribe((message) => {
+            console.log('Received game board:', message.data)
+            this.game_board_state = message.data
+        })
         }
     },
     watch: {
@@ -141,5 +142,6 @@ let vueApp = new Vue({
     mounted() {
         // page is ready
         console.log('page is ready!')
+        this.connect()
     },
 })

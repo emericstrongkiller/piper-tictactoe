@@ -56,9 +56,27 @@ https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invari
         * SIFT was ?? lot of keypoints but what to do ?
         * Contours analysis was GREAT, nice contours on everything, no noise
         * Contour detection per square Doesnt work right off the bat, I need to make the shape lines thinner in order to avoid contouring the whole shape instead of each individually.
-        * 
+        * TRY ADAPTATIVE CANNY EDGES => OH OUI C UN BANGER
+        * Ensuite contour detect
+        * Ensuite area >50 pour filter out les cases vides
+        * Puis circularity pour differencier cross et circle => ALMOST ALWAYS: cross<0,13 &&   0,8<circle<
+        * Actually Circularity was great BUT not for circles that were a little bit cropped or unfinished (not meeting the other end of the line of the circle you know, leaving a kind of hollow shape)
+          and those weird circles were sooo hard to identify properly as circles 
+          => Switch to solidity + vertices id (solidity = area/convex_hull)   you know => Circles have HIGH number of    solidity ~0.9
+             And Cross have low solidity (easy to understand).
+    6. SUCCESS RATE analysis:
+        - Standard Gray-Image: 35% Success
+        - With HSV  channel 2 (V):   45% Success
 
-        TRY ADAPTATIVE CANNY EDGES
+    RESSOURCES:
+    https://stackoverflow.com/questions/42203898/python-opencv-blob-detection-or-circle-detection
+    https://medium.com/aimonks/decoding-the-power-of-sift-the-gold-standard-in-feature-detection-7025e6eef7ab
+    https://medium.com/@noel.benji/a-guide-to-robust-edge-detection-with-opencv-1d703506e014
+    https://medium.com/@amit25173/opencv-object-recognition-642c8cf8379b
+    file:///home/emskiller/Downloads/Learning%20OpenCV%20OReilly.pdf
+
+
+- In order to be faster in reco, you could keep the current state of the game in the deque buffers => yep
 
 
 - The urge to finish a functional project pushed me to just dive down on code with a retro-planning that was I think functional, 
