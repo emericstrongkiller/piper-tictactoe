@@ -140,9 +140,9 @@ public:
     }
     // go to clear pos UP for order = 10
     else if (current_order_[0] == 10) {
-      draw_title_("clear-pos0");
+      draw_title_("stand-by-pos");
       moveit_visual_tools_->trigger();
-      setup_goal_pose_target(0.226358, -0.111523, 0.211479, -0.000396, 1.000000,
+      setup_goal_pose_target(0.210, -0.115, 0.211479, -0.000396, 1.000000,
                              0.000314, 0.000393);
       piper_interface_->plan(simple_plan_);
       // prompt_("Now next to execute!");
@@ -150,10 +150,24 @@ public:
     }
     // go to clear pos DOWN for order = 11
     else if (current_order_[0] == 11) {
-      draw_title_("clear-pos1");
+      draw_title_("clearing");
       moveit_visual_tools_->trigger();
-      setup_goal_pose_target(0.226358, -0.111472, 0.204557, -0.000438, 1.000000,
+      // pre-clear pos
+      setup_goal_pose_target(0.220, -0.115, 0.211479, -0.000396, 1.000000,
+                             0.000314, 0.000393);
+      piper_interface_->plan(simple_plan_);
+      // prompt_("Now next to execute!");
+      piper_interface_->execute(simple_plan_);
+      // clear pos
+      setup_goal_pose_target(0.220, -0.115, 0.200000, -0.000438, 1.000000,
                              0.000647, -0.000225);
+      piper_interface_->plan(simple_plan_);
+      // prompt_("Now next to execute!");
+      piper_interface_->execute(simple_plan_);
+      // back to pre-clear pos
+      // pre-clear pos
+      setup_goal_pose_target(0.220, -0.115, 0.211479, -0.000396, 1.000000,
+                             0.000314, 0.000393);
       piper_interface_->plan(simple_plan_);
       // prompt_("Now next to execute!");
       piper_interface_->execute(simple_plan_);
@@ -175,15 +189,18 @@ public:
       // prompt_("Press 'Next' in the RvizVisualToolsGui window to plan");
       draw_title_("Planning");
       moveit_visual_tools_->trigger();
-      if (current_order_[1] == 0) {
+      if (current_order_[1] == 0 && current_order_[0] < 10) {
         plan_fraction_robot_ = piper_interface_->computeCartesianPath(
             generate_circle_pose_targets(), end_effector_step_, jump_threshold_,
             cartesian_trajectory_plan_);
-      } else if (current_order_[1] == 1) {
+      } else if (current_order_[1] == 1 && current_order_[0] < 10) {
         plan_fraction_robot_ = piper_interface_->computeCartesianPath(
             generate_cross_pose_targets(), end_effector_step_, jump_threshold_,
             cartesian_trajectory_plan_);
-      } else if (current_order_[1] == 2) {
+
+      }
+      // Draw a grid ONLY if piper is in the middle of the grid
+      else if (current_order_[1] == 2 && current_order_[0] == 4) {
         plan_fraction_robot_ = piper_interface_->computeCartesianPath(
             generate_grid_pose_targets(), end_effector_step_, jump_threshold_,
             cartesian_trajectory_plan_);
@@ -195,8 +212,8 @@ public:
         moveit_visual_tools_->trigger();
         RCLCPP_INFO(logger_, "Valid Trajectory! Percent Valid: %f",
                     plan_fraction_robot_);
-        prompt_("Press 'Next' to execute WHEN YOU ARE SURE The plan is safe "
-                "for the real Environment");
+        // prompt_("Press 'Next' to execute WHEN YOU ARE SURE The plan is safe "
+        //         "for the real Environment");
         draw_title_("Executing");
         moveit_visual_tools_->trigger();
         // TOTG PART
@@ -236,14 +253,19 @@ public:
                                -0.000004, 0.000027);
         piper_interface_->plan(simple_plan_);
         piper_interface_->execute(simple_plan_);
-        current_order_response_.data = true;
+        // return true ONLY if the robot didnt draw the grid just now
+        if (current_order_[0] == 4 && current_order_[1] == 2) {
+          current_order_response_.data = false;
+        } else {
+          current_order_response_.data = true;
+        }
         piper_orders_response_publisher_->publish(current_order_response_);
       }
     }
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_circle_pose_targets(double retract_amount = 0.015,
+  generate_circle_pose_targets(double retract_amount = 0.016,
                                double radius = 0.015,
                                double nb_waypoints = 200) {
     std::vector<geometry_msgs::msg::Pose> targets;
@@ -283,7 +305,7 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_cross_pose_targets(double retract_amount = 0.015,
+  generate_cross_pose_targets(double retract_amount = 0.016,
                               double square_size = 0.03) {
     std::vector<geometry_msgs::msg::Pose> targets;
     piper_curr_pos_ = piper_interface_->getCurrentPose();
@@ -338,7 +360,7 @@ public:
   }
 
   std::vector<geometry_msgs::msg::Pose>
-  generate_grid_pose_targets(double retract_amount = 0.015,
+  generate_grid_pose_targets(double retract_amount = 0.018,
                              double grid_size = 0.12) {
     std::vector<geometry_msgs::msg::Pose> targets;
     piper_curr_pos_ = piper_interface_->getCurrentPose();

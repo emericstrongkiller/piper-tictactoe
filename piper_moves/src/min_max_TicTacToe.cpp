@@ -26,8 +26,16 @@ public:
         this->create_publisher<std_msgs::msg::Int32MultiArray>(
             "/best_move_min_max", 10);
 
+    // game start topic sub
+    game_start_subscriber_ =
+        this->create_subscription<std_msgs::msg::Int32MultiArray>(
+            "/game_start", 10,
+            std::bind(&MinMaxTicTacToe::game_start_subscriber_callback, this,
+                      _1));
+
     // variables init
     current_game_board_2D_.resize(3, std::vector<int>(3, 0));
+    robot_shape_ = 2;
   }
 
 private:
@@ -41,8 +49,6 @@ private:
     RCLCPP_INFO(this->get_logger(),
                 "Just received current game board's state:");
     print_game_board_2D();
-
-    // get best move for the 0 player
     best_move_ = find_best_move();
     RCLCPP_INFO(this->get_logger(), "ORIGINAL best_move: {%d,%d}",
                 best_move_.data[0], best_move_.data[1]);
@@ -116,7 +122,7 @@ private:
     for (size_t i = 0; i < current_game_board_2D_.size(); i++) {
       for (size_t j = 0; j < current_game_board_2D_[0].size(); j++) {
         if (current_game_board_2D_[i][j] == 0) {
-          current_game_board_2D_[i][j] = 2;
+          current_game_board_2D_[i][j] = robot_shape_;
           int score = min_max(0, false);
           current_game_board_2D_[i][j] = 0;
           if (score > best_score) {
@@ -130,14 +136,15 @@ private:
   }
 
   int min_max(int depth, bool is_maximizing) {
+    int robot = robot_shape_;
+    int opponent = (robot_shape_ == 1) ? 2 : 1;
     int win_check = check_winner();
-    if (win_check == 2) {
-      RCLCPP_DEBUG(this->get_logger(), "O WIN");
-      return 1;
-    } else if (win_check == 1) {
-      RCLCPP_DEBUG(this->get_logger(), "X WIN");
-      return -1;
-    } else if (check_full_board()) {
+
+    if (win_check == robot)
+      return 10 - depth;
+    if (win_check == opponent)
+      return depth - 10;
+    if (check_full_board()) {
       RCLCPP_DEBUG(this->get_logger(), "NONE WIN");
       return 0;
     }
@@ -148,7 +155,7 @@ private:
       for (size_t i = 0; i < current_game_board_2D_.size(); i++) {
         for (size_t j = 0; j < current_game_board_2D_[0].size(); j++) {
           if (current_game_board_2D_[i][j] == 0) {
-            current_game_board_2D_[i][j] = 2;
+            current_game_board_2D_[i][j] = robot;
             int score = min_max(depth + 1, false);
             current_game_board_2D_[i][j] = 0;
             best_score = std::max(best_score, score);
@@ -164,7 +171,7 @@ private:
       for (size_t i = 0; i < current_game_board_2D_.size(); i++) {
         for (size_t j = 0; j < current_game_board_2D_[0].size(); j++) {
           if (current_game_board_2D_[i][j] == 0) {
-            current_game_board_2D_[i][j] = 1;
+            current_game_board_2D_[i][j] = opponent;
             int score = min_max(depth + 1, true);
             current_game_board_2D_[i][j] = 0;
             best_score = std::min(best_score, score);
@@ -180,8 +187,8 @@ private:
     std_msgs::msg::Int32MultiArray ret;
     // add the position converted to a 1D array you know
     ret.data.push_back(best_move.data[0] * 3 + best_move.data[1]);
-    // and say you want  to put a circle (the robot puts circle)
-    ret.data.push_back(0);
+    // and say you want  to put the chosen robot_shape_
+    ret.data.push_back(robot_shape_);
 
     // then add current_board square infos
     for (size_t i = 2; i < best_move_.data.size(); i++) {
@@ -189,6 +196,12 @@ private:
     }
 
     return ret;
+  }
+
+  void game_start_subscriber_callback(
+      const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
+    // get the shape the robot will play this game
+    robot_shape_ = msg->data[0];
   }
 
   // Sub & Pub
@@ -199,6 +212,10 @@ private:
   // Variables
   std::vector<std::vector<int>> current_game_board_2D_;
   std_msgs::msg::Int32MultiArray best_move_;
+  // game infos subscriber
+  rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
+      game_start_subscriber_;
+  int robot_shape_;
 };
 
 int main(int argc, char **argv) {
