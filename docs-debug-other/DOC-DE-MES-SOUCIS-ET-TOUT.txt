@@ -83,6 +83,8 @@ https://stackoverflow.com/questions/9860667/writing-robust-color-and-size-invari
   but not enough code structure analysis (like what nodes do I create, what architecture Do i want for the system ?) 
   => Result: some of the code is in my opinion not clean/readable enough for me for a final project. (Data reused, variables added as return in some function) -> EXAMPLES PLEASE
 
+- anticipate more amount of time needed for runtime debugging (i.e Finding all Segmentation fault/opencv fault Crashes   sources)
+
 
 - POUR LA DETECTION DES LIGNES CETAIT CA SON WORKFLOW:
 Compact summary:

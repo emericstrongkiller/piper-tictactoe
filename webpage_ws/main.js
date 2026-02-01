@@ -3,7 +3,7 @@ let vueApp = new Vue({
     data: {
         // ros connection
         ros: null,
-        rosbridge_address: 'wss://i-04af627575c17c6bc.robotigniteacademy.com/f1d7937a-f8c4-4c78-b393-1539f6a4b3d2/rosbridge/',
+        rosbridge_address: 'wss://i-09662c3dd6d135ca9.robotigniteacademy.com/423a4da6-0dcb-4574-94c5-45b97bcb4847/rosbridge/',
         connected: false,
         // page content
         menu_title: 'My menu title',
@@ -19,7 +19,10 @@ let vueApp = new Vue({
         slider2_val: 3,
         slider3_val: 0,
         // board state
-        game_board_state: [1, 2, 0, 0, 1, 2, 0, 0, 1],
+        game_board_state: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        // game vals
+        human_shape: 1,
+        robot_shape: 2,
     },
     methods: {
         connect: function() {
@@ -41,6 +44,7 @@ let vueApp = new Vue({
                 console.log('Connection to ROSBridge established!')
                 // Camera
                 this.setCameras()
+                this.setRawCamera()
                 // Subscribe to game board
                 this.GetGameBoard()
             })
@@ -53,6 +57,7 @@ let vueApp = new Vue({
                 console.log('Connection to ROSBridge was closed!')
                 // delete Camera div
                 document.getElementById('divCamera').innerHTML = ''
+                document.getElementById('divCamera2').innerHTML = ''
             })
         },
         disconnect: function() {
@@ -68,6 +73,9 @@ let vueApp = new Vue({
             let message = new ROSLIB.Message({data: [pos_nbr]})
             topic.publish(message)
             current_robot_pos = pos_nbr
+            if (pos_nbr == 11){
+                this.game_board_state = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+            }
         },
         drawShape: function(shape_id) {
             let topic = new ROSLIB.Topic({
@@ -75,8 +83,37 @@ let vueApp = new Vue({
                 name: '/piper_move_orders',
                 messageType: 'std_msgs/msg/Int32MultiArray'
             })
-            let message = new ROSLIB.Message({data: [current_robot_pos,shape_id]})
+            let message;
+            if (shape_id == 2){
+                message = new ROSLIB.Message({data: [4, shape_id]})
+                current_robot_pos = 4
+            } else {
+                message = new ROSLIB.Message({data: [current_robot_pos, shape_id]})
+            }
             topic.publish(message)
+        },
+        startGame: function() {
+            let topic = new ROSLIB.Topic({
+                ros: this.ros,
+                name: '/piper_move_orders',
+                messageType: 'std_msgs/msg/Int32MultiArray'
+            })
+            let message = new ROSLIB.Message({data: [4, 2]})
+            topic.publish(message)
+            // also publish chosen human/robot shapes for this game
+            let topic2 = new ROSLIB.Topic({
+                ros: this.ros,
+                name: '/game_start',
+                messageType: 'std_msgs/msg/Int32MultiArray'
+            })
+            let message2 = new ROSLIB.Message({data: [this.robot_shape]})
+            topic2.publish(message2)
+                        console.log("Just Published SHAPE: " + this.robot_shape)
+        },
+        swapShapes() {
+            const tmp = this.human_shape
+            this.human_shape = this.robot_shape
+            this.robot_shape = tmp
         },
         setCameras: function() {
             // destroy previous viewers
@@ -95,6 +132,26 @@ let vueApp = new Vue({
                 width: 1400,
                 height: 1080,
                 topic: this.video_server,
+                ssl: true,
+            })
+        },
+        setRawCamera: function() {
+            // destroy previous viewers
+            if (this.viewer2) {
+              document.getElementById("divCamera2").innerHTML = ""
+              this.viewer2 = null
+            }
+            let without_wss = this.rosbridge_address.split('wss://')[1]
+            console.log(without_wss)
+            let domain = without_wss.split('/')[0] + '/' + without_wss.split('/')[1]
+            console.log(domain)
+            let host = domain + '/cameras'
+            this.viewer2 = new MJPEGCANVAS.Viewer({
+                divID: 'divCamera2',
+                host: host,
+                width: 1400,
+                height: 600,
+                topic: '/camera/D435/color/image_raw',
                 ssl: true,
             })
         },

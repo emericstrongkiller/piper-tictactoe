@@ -1,143 +1,136 @@
+<!DOCTYPE html>
 <html>
 
 <head>
-    <title>My first web page for ROS!</title>
+    <title>Piper TicTacToe</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css"
         integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
-    <!-- VueJS lib -->
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
-    <!-- Lib ROSBridge !-->
     <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/roslib.min.js"></script>
-    <!-- Camera MJPEG Canvas -->
     <script src="https://cdn.jsdelivr.net/npm/eventemitter2@5.0.1/lib/eventemitter2.min.js"></script>
     <script type="text/javascript" src="./libs/mjpegcanvas.min.js"></script>
+    <link rel="stylesheet" href="style.css">
 </head>
 
-<body class="d-flex  h-100">
-    <!-- header of the page -->
-    <header class="header">
-        <div class="container">
-            <div>
-                <h1>Piper TicTacToe Webpage!</h1>
-                <p>Let's confront humans and machines</p>
-            </div>
-        </div>
+<body>
+    <header class="main-header">
+        <h1>TicTacToBot</h1>
+        <p>Will you beat it ?</p>
     </header>
 
-    <!-- main content -->
     <main id="vueApp">
-        <!-- Tic Tac Toe Board -->
-        <div class="card mb-3">
-            <div class="card-body">
-                <h4 class="text-center">Tic Tac Toe Board</h4>
-                <div class="tictactoe-grid">
-                    <div v-for="(cell, index) in game_board_state" :key="index" class="grid-cell">
-                        <div v-if="cell === 0" class="empty-cell"></div>
-                        <img v-else-if="cell === 1" src="./images/cross.png" class="shape-img" alt="X" />
-                        <img v-else-if="cell === 2" src="./images/circle.png" class="shape-img" alt="O" />
-                        <div v-else class="undefined-cell">?</div>
+        <div class="game-container">
+            <div class="left-section">
+                <div class="top-row">
+                    <!-- Piper Controls -->
+                    <div class="left-panel">
+                        <div class="panel-card">
+                            <h3>Robot Positions</h3>
+                            <div class="position-grid">
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(0)">1</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(1)">2</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(2)">3</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(3)">4</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(4)">5</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(5)">6</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(6)">7</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(7)">8</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(8)">9</button>
+                            </div>
+                            <div class="action-buttons">
+                                <button class="action-btn" :disabled="!connected" @click="goToPos(10)">Stand-by</button>
+                                <button class="action-btn" :disabled="!connected" @click="goToPos(12)">Home</button>
+                            </div>
+                        </div>
+
+                        <div class="panel-card">
+                            <h3>Robot Actions</h3>
+                            <div class="action-buttons">
+                                <button class="action-btn" :disabled="!connected" @click="drawShape(2)">Draw
+                                    Grid</button>
+                                <button class="action-btn draw-circle" :disabled="!connected" @click="drawShape(0)">Draw
+                                    Circle</button>
+                                <button class="action-btn draw-cross" :disabled="!connected" @click="drawShape(1)">Draw
+                                    Cross</button>
+                                <button class="action-btn" :disabled="!connected" @click="goToPos(11)">Clear
+                                    Board</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Board + game setup ! -->
+                    <div class="center-panel">
+                        <div class="panel-card">
+                            <h3>Game Board</h3>
+                            <div class="tictactoe-grid">
+                                <div v-for="index in [6,7,8,3,4,5,0,1,2]" :key="index" class="grid-cell">
+                                    <div v-if="game_board_state[index] === 0" class="empty-cell"></div>
+                                    <img v-else-if="game_board_state[index] === 1" src="./images/cross.png"
+                                        class="shape-img" alt="X" />
+                                    <img v-else-if="game_board_state[index] === 2" src="./images/circle.png"
+                                        class="shape-img" alt="O" />
+                                    <div v-else class="undefined-cell">?</div>
+                                </div>
+                            </div>
+                            <div class="board-status">
+                                <p>Board State: {{ game_board_state }}</p>
+                            </div>
+                        </div>
+
+                        <div class="panel-card">
+                            <h3>Game Control</h3>
+                            <div class="game-control-center">
+                                <button class="action-btn" :disabled="!connected" @click="startGame()">Start
+                                    Game</button>
+                            </div>
+                            <div class="swap-section">
+                                <button class="action-btn" :disabled="!connected" @click="swapShapes">Swap
+                                    Shapes</button>
+                            </div>
+
+                            <div class="players">
+                                <div class="player">
+                                    <span>Human</span>
+                                    <img :src="human_shape === 1 ? './images/cross.png' : './images/circle.png'"
+                                        width="50" />
+                                </div>
+                                <div class="player">
+                                    <span>Robot</span>
+                                    <img :src="robot_shape === 1 ? './images/cross.png' : './images/circle.png'"
+                                        width="50" />
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Debug info -->
-                <p class="text-center">Raw state: {{ game_board_state }}</p>
+                <!-- Camera Feed -->
+                <div class="panel-card camera-panel">
+                    <h3>Raw Camera</h3>
+                    <div id="divCamera2" class="camera-container"></div>
+                </div>
             </div>
-        </div>
-        <div class="container">
-            <div class="row">
-                <!-- Perception choice -->
-                <select id="video_server_" v-model="video_server">
-                    <option value="/camera/D435/color/image_raw">raw_image_server</option>
-                    <option value="/perception_server">perception_server</option>
-                    <option value="/cvtColor_perception_server">cvtColor_perception_server</option>
-                    <option value="/no_shadow_perception_server">no_shadow_perception_server</option>
-                    <option value="/binary_image_perception_server">binary_image_perception_server</option>
-                    <option value="/roi_image_perception_server">roi_image_perception_server</option>
-                    <option value="/test_gray_standard">test_gray_standard</option>
-                    <option value="/test_saturation">test_saturation</option>
-                    <option value="/test_color_filter">test_color_filter</option>
-                </select>
-                <!-- Parameter slider -->
-                <div class="slidecontainer">
-                    <input type="range" min="0" max="8" class="slider" v-model="slider_val" />
-                </div>
-                <div>
-                    {{slider_val}}
-                </div>
-                <div class="slidecontainer">
-                    <input type="range" min="0" max="20" class="slider" v-model="slider2_val" />
-                </div>
-                <div>
-                    {{slider2_val}}
-                </div>
-                <div class="slidecontainer">
-                    <input type="range" min="0" max="100" class="slider" v-model="slider3_val" />
-                </div>
-                <div>
-                    {{slider3_val}}
-                </div>
-                <!-- Live Cameras -->
-                <div class="col-md-12 text-center">
-                    <div class="card">
-                        Camera1
-                        <div id="divCamera"></div>
-                    </div>
-                </div>
-                <div class="col-md-6 text-center">
-                    <div class="card">
-                        <h4>Piper Positions</h4>
-                        <div class="card-body">
-                            <div class="row">
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(0)">1</button>
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(1)">2</button>
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(2)">3</button>
-                            </div>
-                            <div class="row">
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(3)">4</button>
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(4)">5</button>
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(5)">6</button>
-                            </div>
-                            <div class="row">
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(6)">7</button>
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(7)">8</button>
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(8)">9</button>
-                            </div>
-                            <div class="row">
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(10)">pre-clear</button>
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(11)">Clear</button>
-                                <button class="col-md-2 btn btn-primary" :disabled="!connected"
-                                    @click="goToPos(12)">zero</button>
-                            </div>
-                            <button class="col-md-2 btn btn-primary" :disabled="!connected" @click="drawShape(0)">draw
-                                Circle</button>
-                            <button class="col-md-2 btn btn-primary" :disabled="!connected" @click="drawShape(1)">draw
-                                Cross</button>
-                            <button class="col-md-2 btn btn-primary" :disabled="!connected" @click="drawShape(2)">draw
-                                Grid</button>
-                        </div>
-                    </div>
+
+            <!-- Camera processsss -->
+            <div class="right-panel">
+                <div class="panel-card camera-panel">
+                    <h3>Camera Feed</h3>
+                    <select v-model="video_server" class="video-select">
+                        <option value="/camera/D435/color/image_raw">Raw Image</option>
+                        <option value="/perception_server">Perception</option>
+                        <option value="/cvtColor_perception_server">Color Convert</option>
+                        <option value="/no_shadow_perception_server">No Shadow</option>
+                        <option value="/binary_image_perception_server">Binary</option>
+                        <option value="/roi_image_perception_server">ROI</option>
+                        <option value="/test_gray_standard">Gray Standard</option>
+                        <option value="/test_saturation">Saturation</option>
+                        <option value="/test_color_filter">Color Filter</option>
+                    </select>
+                    <div id="divCamera" class="camera-container"></div>
                 </div>
             </div>
         </div>
     </main>
-
-    <!-- footer -->
-    <footer class="footer mt-auto bg-dark text-light">
-        <div class="container">
-            <h5>page ends here!</h5>
-        </div>
-    </footer>
 
     <script type="text/javascript">
         var script = document.createElement('script');
@@ -148,43 +141,3 @@
 </body>
 
 </html>
-
-
-<style>
-    .tictactoe-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 100px);
-        grid-template-rows: repeat(3, 100px);
-        gap: 5px;
-        margin: 20px auto;
-        width: fit-content;
-        background-color: #333;
-        padding: 5px;
-        border-radius: 10px;
-    }
-
-    .grid-cell {
-        background-color: #191919;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border: 2px solid #333;
-        border-radius: 5px;
-    }
-
-    .shape-img {
-        width: 80%;
-        height: 80%;
-        object-fit: contain;
-    }
-
-    .empty-cell {
-        font-size: 30px;
-        color: #ccc;
-    }
-
-    .undefined-cell {
-        font-size: 30px;
-        color: red;
-    }
-</style>
