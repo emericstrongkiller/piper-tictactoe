@@ -25,20 +25,32 @@
 #include <vector>
 
 const double TABLET_CONTOUR_AREA_INTERVAL[2] = {25000, 30000};
-const int VERTICAL_LINES_X_CLUSTERS_INTERVAL = 1;
-const int HORIZONTAL_LINES_Y_CLUSTERS_INTERVAL = 2;
+int VERTICAL_LINES_X_CLUSTERS_INTERVAL = 1;
+int HORIZONTAL_LINES_Y_CLUSTERS_INTERVAL = 2;
 
 class CameraSubscriber : public rclcpp::Node {
 public:
   CameraSubscriber() : Node("camera_subscriber") {
+    // variables init
+    perception_params_.data = {0, 3, 0};
+    squares_buffers_.resize(9);
+    pipeline_occ_counter_ = 0;
+    pipeline_success_rate_ = 0.0;
+    pipeline_failures_ = 0;
+    order_done_ = true;
+    nb_right_since_last_piper_order_ = 0;
+
+    // game vars
+    robot_shape_ = 0;
+
     // camera topic parameter
     this->declare_parameter<std::string>("camera_topic",
                                          "/camera/D435/color/image_raw");
     std::string camera_topic = this->get_parameter("camera_topic").as_string();
 
     // Reentrant callback group
-    auto callback_group =
-        this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    auto callback_group = this->create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive);
     auto sub_options = rclcpp::SubscriptionOptions();
     sub_options.callback_group = callback_group;
 
@@ -61,6 +73,15 @@ public:
                 this, std::placeholders::_1),
             sub_options);
 
+    // game start topic sub  to know when to publish to minmax (when
+    // robot-shape=X=> publish when as many circles as crosses,   when
+    // robot-shape=O=>publish when more cross than circle)
+    game_start_subscriber_ =
+        this->create_subscription<std_msgs::msg::Int32MultiArray>(
+            "/game_start", 10,
+            std::bind(&CameraSubscriber::game_start_subscriber_callback, this,
+                      std::placeholders::_1));
+
     // publishers
     order_response_publisher_ =
         this->create_publisher<std_msgs::msg::Int32MultiArray>(
@@ -73,9 +94,9 @@ public:
     no_shadow_server_publisher_ =
         this->create_publisher<sensor_msgs::msg::Image>(
             "/no_shadow_perception_server", 10);
-    binary_image_server_publisher_ =
+    grid_lines_server_publisher_ =
         this->create_publisher<sensor_msgs::msg::Image>(
-            "/binary_image_perception_server", 10);
+            "/grid_lines_perception_server", 10);
     roi_image_server_publisher_ =
         this->create_publisher<sensor_msgs::msg::Image>(
             "/roi_image_perception_server", 10);
@@ -83,19 +104,11 @@ public:
     // In constructor, add:
     test_gray_publisher_ = this->create_publisher<sensor_msgs::msg::Image>(
         "/test_gray_standard", 10);
-    test_saturation_publisher_ =
-        this->create_publisher<sensor_msgs::msg::Image>("/test_saturation", 10);
+    adaptive_canny_publisher_ = this->create_publisher<sensor_msgs::msg::Image>(
+        "/adaptive_canny_perception_server", 10);
     test_color_filter_publisher_ =
         this->create_publisher<sensor_msgs::msg::Image>("/test_color_filter",
                                                         10);
-
-    // variables init
-    perception_params_.data = {0, 3, 0};
-    squares_buffers_.resize(9);
-    grid_shapes_number_ = 0;
-    pipeline_occ_counter_ = 0;
-    pipeline_success_rate_ = 0.0;
-    pipeline_failures_ = 0;
   }
 
 private:
@@ -103,6 +116,8 @@ private:
     RCLCPP_INFO(this->get_logger(),
                 "Receiving take Pic order. About to perceive game Grid..");
     order_done_ = !(msg->data);
+    // init right counter
+    nb_right_since_last_piper_order_ = 0;
   }
 
   void perception_parameter_subscriber_callback(
@@ -147,32 +162,53 @@ private:
               "Undefined || partially undefined current_game_board => not "
               "publishing anything");
           pipeline_failures_++;
+          game_board_quality = 0;
           break;
         }
       }
-      // Also check if the board has an additional shape in it, otherwise no
-      // publish
-      auto count_shapes = [](const std::vector<int> &cells) {
-        int c = 0;
-        for (int v : cells)
-          if (v > 0)
-            ++c;
-        return c;
-      };
-      int new_nb_grid_shapes = count_shapes(current_game_board_.second);
-      if (game_board_quality == 1 &&
-          (new_nb_grid_shapes - grid_shapes_number_) == 1) {
-        RCLCPP_INFO(
-            this->get_logger(),
-            "EXACTLY 1 more shape in the grid, publishing for MinMax Node...");
-        current_game_board_squares_.data = current_game_board_.second;
-        order_response_publisher_->publish(current_game_board_squares_);
-        grid_shapes_number_ = new_nb_grid_shapes;
-        order_done_ = true;
+      if (game_board_quality == 1) {
+        // feedback of current processed image Anyway
+        cv_ptr_->image = current_game_board_.first;
+        cv_ptr_->encoding = "bgr8";
+        video_server_publisher_->publish(*cv_ptr_->toImageMsg());
+
+        // PUBLISH TO MINMAX ONLY IF THERE IS A CHANGE TO THE GRID THAT
+        // NECESSITATE THE ROBOT TO PLAY
+        // get nb or circles &  crosses in the grid
+        int nb_cross = 0, nb_circle = 0;
+        for (auto &el : current_game_board_.second) {
+          if (el == 2) {
+            nb_circle++;
+          } else if (el == 1) {
+            nb_cross++;
+          }
+        }
+
+        // add right counter and publish only if there is enough right counter
+        // since last call
+        nb_right_since_last_piper_order_++;
+
+        // if robot plays O this game, publish only if nb_cross>nb_circle ALSO
+        // wait for at least 1 shape to be on the board
+        if (robot_shape_ == 2 && nb_cross > nb_circle &&
+            nb_right_since_last_piper_order_ >= 10 &&
+            nb_cross + nb_circle >= 1) {
+          RCLCPP_INFO(this->get_logger(), "publishing game_grid status...");
+          current_game_board_squares_.data = current_game_board_.second;
+          order_response_publisher_->publish(current_game_board_squares_);
+          order_done_ = true;
+        }
+        // if robot plays X this game publish only if nb_cross==nb_circle ALSO
+        // wait for at least 1 shape to be on the board
+        else if (robot_shape_ == 1 && nb_cross == nb_circle &&
+                 nb_right_since_last_piper_order_ >= 10 &&
+                 nb_cross + nb_circle >= 1) {
+          RCLCPP_INFO(this->get_logger(), "publishing game_grid status...");
+          current_game_board_squares_.data = current_game_board_.second;
+          order_response_publisher_->publish(current_game_board_squares_);
+          order_done_ = true;
+        }
       }
-      cv_ptr_->image = current_game_board_.first;
-      cv_ptr_->encoding = "bgr8";
-      video_server_publisher_->publish(*cv_ptr_->toImageMsg());
 
       pipeline_occ_counter_++;
       RCLCPP_INFO(this->get_logger(), "pipeline_occ_counter_: %d",
@@ -353,10 +389,6 @@ private:
     cv_ptr_->encoding = "mono8";
     test_gray_publisher_->publish(*cv_ptr_->toImageMsg());
 
-    cv_ptr_->image = hsv_channels[1]; // S channel
-    cv_ptr_->encoding = "mono8";
-    test_saturation_publisher_->publish(*cv_ptr_->toImageMsg());
-
     // Continue with Gaussian blur and Canny...
     cv::GaussianBlur(processed_imaged, processed_imaged, cv::Size(5, 5), 0);
 
@@ -372,6 +404,11 @@ private:
     cv::Mat edges;
     cv::Canny(processed_imaged, edges, lower_threshold, upper_threshold);
 
+    cv_ptr_->image = processed_imaged;
+    cv_ptr_->encoding = "mono8";
+    adaptive_canny_publisher_->publish(*cv_ptr_->toImageMsg());
+    save_image(processed_imaged, "test.png");
+
     // GRID LINES DETECTION ######################################
 
     // Detect vertical lines first
@@ -383,8 +420,8 @@ private:
       float angle = atan2(l[3] - l[1], l[2] - l[0]) * 180 / CV_PI;
       if (abs(angle - 90) < 20 || abs(angle + 90) < 20) {
         v_lines_full.push_back(l);
-        // cv::line(img_cropped, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]),
-        //          cv::Scalar(0, 255, 0), 1, 8);
+        cv::line(img_cropped, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]),
+                 cv::Scalar(0, 255, 0), 1, 8);
       }
     }
 
@@ -397,25 +434,40 @@ private:
       float angle = atan2(l[3] - l[1], l[2] - l[0]) * 180 / CV_PI;
       if (abs(angle) < 10 || abs(angle) > 170) {
         h_lines_full.push_back(l);
-        // cv::line(img_cropped, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]),
-        //          cv::Scalar(0, 0, 255), 1, 8);
+        cv::line(img_cropped, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]),
+                 cv::Scalar(0, 0, 255), 1, 8);
       }
     }
+
+    cv_ptr_->image = img_cropped;
+    cv_ptr_->encoding = "bgr8";
+    grid_lines_server_publisher_->publish(*cv_ptr_->toImageMsg());
 
     // Calculate and Draw Vertical lines
     std::vector<int> v_line_x_positions;
     std::vector<int> v_line_y_positions;
     int y_vert_min, y_vert_max;
+
+    // Safety check: need vertical lines
+    if (v_lines_full.empty()) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "No vertical lines detected. Returning...");
+      return std::pair<cv::Mat, std::vector<int>>(img_cropped,
+                                                  game_board_grid_state);
+    }
+
     for (auto &l : v_lines_full) {
       v_line_x_positions.push_back(static_cast<int>((l[0] + l[2]) / 2.0f));
       RCLCPP_DEBUG(this->get_logger(), "pushed back: %d -> v_line_x_positions",
                    static_cast<int>((l[0] + l[2]) / 2.0f));
     }
+
     std::sort(v_line_x_positions.begin(), v_line_x_positions.end());
     // Cluster by proximity (merge lines within 4px)
     std::vector<int> clustered;
     clustered.push_back(v_line_x_positions[0]);
     RCLCPP_DEBUG(this->get_logger(), "CLUSTERED[0]: %d", clustered[0]);
+    VERTICAL_LINES_X_CLUSTERS_INTERVAL = perception_params_.data[0];
     for (auto &pos : v_line_x_positions) {
       RCLCPP_DEBUG(this->get_logger(), "DIDN'T CLUSTER: %d", pos);
       if (abs(pos - clustered.back()) > VERTICAL_LINES_X_CLUSTERS_INTERVAL) {
@@ -460,6 +512,13 @@ private:
     std::vector<int> h_line_x_positions;
     std::vector<int> h_line_y_positions;
     int x_horiz_min, x_horiz_max;
+    // Safety check: need horizontal lines
+    if (h_lines_full.empty()) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "No horizontal lines detected. Returning...");
+      return std::pair<cv::Mat, std::vector<int>>(img_cropped,
+                                                  game_board_grid_state);
+    }
     for (auto &l : h_lines_full) {
       h_line_y_positions.push_back(static_cast<int>((l[1] + l[3]) / 2.0f));
       RCLCPP_DEBUG(this->get_logger(), "pushed back: %d -> h_line_y_positions",
@@ -470,6 +529,7 @@ private:
     std::vector<int> h_clustered;
     h_clustered.push_back(h_line_y_positions[0]);
     RCLCPP_DEBUG(this->get_logger(), "h_clustered[0]: %d", h_clustered[0]);
+    HORIZONTAL_LINES_Y_CLUSTERS_INTERVAL = perception_params_.data[1];
     for (auto &pos : h_line_y_positions) {
       RCLCPP_DEBUG(this->get_logger(), "DIDN'T CLUSTER: %d", pos);
       if (abs(pos - h_clustered.back()) >
@@ -800,7 +860,7 @@ private:
 
   int detect_shape(std::vector<cv::Point> contour) {
     double area = cv::contourArea(contour);
-    if (area < 50) {
+    if (area < 80) {
       RCLCPP_DEBUG(this->get_logger(), "No Shape");
       return 0;
     }
@@ -882,6 +942,11 @@ private:
     return r.width > 0 && r.height > 0;
   }
 
+  void game_start_subscriber_callback(
+      const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
+    robot_shape_ = msg->data[0];
+  }
+
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr order_subscriber_;
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr
@@ -893,7 +958,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
       no_shadow_server_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
-      binary_image_server_publisher_;
+      grid_lines_server_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
       roi_image_server_publisher_;
   // perception para subscriber
@@ -913,7 +978,6 @@ private:
   int center_square_height_;
   std::vector<std::deque<int>>
       squares_buffers_; // buffers for more reliable square shape detection
-  int grid_shapes_number_;
   // % of perception pipeline failure
   int pipeline_occ_counter_;
   int pipeline_failures_;
@@ -922,9 +986,14 @@ private:
   // In constructor, add:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr test_gray_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
-      test_saturation_publisher_;
+      adaptive_canny_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
       test_color_filter_publisher_;
+  // GAME START INFOS
+  rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
+      game_start_subscriber_;
+  int robot_shape_;
+  int nb_right_since_last_piper_order_;
 };
 
 int main(int argc, char **argv) {

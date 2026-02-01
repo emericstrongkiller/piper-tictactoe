@@ -1,0 +1,241 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.main-header {
+    background: #191919;
+    padding: 20px;
+    border-bottom: 1px solid #333;
+    text-align: center;
+}
+
+.main-header h1 {
+    font-size: 48px;
+    font-weight: bold;
+}
+
+.main-header p {
+    font-size: 18px;
+    margin-top: 5px;
+}
+
+main {
+    flex: 1;
+    overflow: hidden;
+    padding: 10px;
+}
+
+.game-container {
+    display: grid;
+    grid-template-columns: 1.6fr 2.2fr;
+    gap: 10px;
+    height: 100%;
+}
+
+.left-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+}
+
+.top-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.left-panel,
+.center-panel,
+.right-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.right-panel {
+    overflow-y: auto;
+}
+
+.panel-card {
+    background: #191919;
+    padding: 15px;
+    border: 1px solid #333;
+}
+
+.panel-card h3 {
+    color: #6cbdaf;
+    margin-bottom: 12px;
+    font-size: 24px;
+    font-weight: bold;
+    text-align: center;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #333;
+}
+
+.position-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.pos-btn {
+    background: #2d2d2d;
+    border: 1px solid #4a4a4a;
+    color: #e0e0e0;
+    padding: 12px;
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.pos-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.action-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.action-btn {
+    padding: 12px;
+    background: #2d2d2d;
+    border: 1px solid #4a4a4a;
+    color: #e0e0e0;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.action-btn.draw-circle {
+    background: #ec87b1;
+    color: #000;
+    font-size: 20px;
+    font-weight: bold;
+    padding: 16px;
+}
+
+.action-btn.draw-cross {
+    background: #6cbdaf;
+    color: #000;
+    font-size: 20px;
+    font-weight: bold;
+    padding: 16px;
+}
+
+.action-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.game-control-center {
+    text-align: center;
+}
+
+.swap-section {
+    margin-top: 20px;
+}
+
+.players {
+    display: flex;
+    justify-content: space-around;
+    margin-top: 15px;
+}
+
+.player {
+    text-align: center;
+}
+
+.player span {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 16px;
+}
+
+.tictactoe-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 100px);
+    grid-template-rows: repeat(3, 100px);
+    gap: 5px;
+    margin: 20px auto;
+    width: fit-content;
+    background-color: #333;
+    padding: 5px;
+}
+
+.grid-cell {
+    background-color: #191919;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #333;
+}
+
+.shape-img {
+    width: 80%;
+    height: 80%;
+    object-fit: contain;
+}
+
+.empty-cell {
+    font-size: 30px;
+}
+
+.undefined-cell {
+    font-size: 30px;
+    color: red;
+}
+
+.board-status {
+    text-align: center;
+    margin-top: 15px;
+}
+
+.board-status p {
+    font-size: 12px;
+}
+
+.camera-panel {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.camera-container {
+    flex: 1;
+    background: #0d0d0d;
+    overflow: hidden;
+    min-height: 400px;
+}
+
+#divCamera2 {
+    min-height: 800px;
+}
+
+.camera-controls {
+    margin: 12px 0;
+}
+
+.video-select {
+    width: 100%;
+    padding: 8px;
+    background: #2d2d2d;
+    border: 1px solid #4a4a4a;
+    color: #e0e0e0;
+    font-size: 14px;
+    cursor: pointer;
+}
