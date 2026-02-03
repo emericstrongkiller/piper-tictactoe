@@ -6,3 +6,5 @@ sleep 20
 ros2 launch piper_with_gripper_moveit move_group_sim.launch.py &
 sleep 15
 ros2 launch piper_with_gripper_moveit moveit_rviz.launch.py &
+sleep 10
+ros2 launch piper_moves joint_space_trajectory.launch.py &

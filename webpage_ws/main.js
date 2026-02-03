@@ -3,7 +3,7 @@ let vueApp = new Vue({
     data: {
         // ros connection
         ros: null,
-        rosbridge_address: 'wss://i-09662c3dd6d135ca9.robotigniteacademy.com/423a4da6-0dcb-4574-94c5-45b97bcb4847/rosbridge/',
+        rosbridge_address: 'wss://i-00c8408c1d93299a9.robotigniteacademy.com/8eeea66b-7520-4eec-a8c9-df37be35782c/rosbridge/',
         connected: false,
         // page content
         menu_title: 'My menu title',
@@ -151,7 +151,7 @@ let vueApp = new Vue({
                 host: host,
                 width: 1400,
                 height: 600,
-                topic: '/camera/D435/color/image_raw',
+                topic: '/camera1/image_raw',
                 ssl: true,
             })
         },

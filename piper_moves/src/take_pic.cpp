@@ -24,9 +24,9 @@
 #include <string>
 #include <vector>
 
-const double TABLET_CONTOUR_AREA_INTERVAL[2] = {25000, 30000};
-const int VERTICAL_LINES_X_CLUSTERS_INTERVAL = 1;
-const int HORIZONTAL_LINES_Y_CLUSTERS_INTERVAL = 2;
+const double TABLET_CONTOUR_AREA_INTERVAL[2] = {470000, 480000};
+const int VERTICAL_LINES_X_CLUSTERS_INTERVAL = 10;   // 1
+const int HORIZONTAL_LINES_Y_CLUSTERS_INTERVAL = 10; // 2
 
 class CameraSubscriber : public rclcpp::Node {
 public:
@@ -44,8 +44,7 @@ public:
     robot_shape_ = 0;
 
     // camera topic parameter
-    this->declare_parameter<std::string>("camera_topic",
-                                         "/camera/D435/color/image_raw");
+    this->declare_parameter<std::string>("camera_topic", "/camera1/image_raw");
     std::string camera_topic = this->get_parameter("camera_topic").as_string();
 
     // Reentrant callback group
@@ -271,6 +270,7 @@ private:
 
       return std::pair<cv::Mat, std::vector<int>>(image, game_board_grid_state);
     }
+
     // find the two extremities of the tablet to crop the image accordingly
     int x_start = 1000, y_start = 1000, x_end = 0, y_end = 0, width = 0,
         height = 0;
@@ -479,17 +479,18 @@ private:
     // draw vertical lines
     if (clustered.size() == 4) {
       // cv::line(img_cropped, cv::Point(clustered[0], y_vert_min),
-      //          cv::Point(clustered[0], y_vert_max), cv::Scalar(0, 0, 255), 1,
-      //          8);
+      //         cv::Point(clustered[0], y_vert_max), cv::Scalar(0, 0, 255), 1,
+      //         8);
       // cv::line(img_cropped, cv::Point(clustered[1], y_vert_min),
       //          cv::Point(clustered[1], y_vert_max), cv::Scalar(0, 0, 255), 1,
-      //          8);
-      // cv::line(img_cropped, cv::Point(clustered[2], y_vert_min),
-      //          cv::Point(clustered[2], y_vert_max), cv::Scalar(0, 0, 255), 1,
+      //           8);
+      //  cv::line(img_cropped, cv::Point(clustered[2], y_vert_min),
+      //           cv::Point(clustered[2], y_vert_max), cv::Scalar(0, 0, 255),
+      //           1,
       //          8);
       // cv::line(img_cropped, cv::Point(clustered[3], y_vert_min),
       //          cv::Point(clustered[3], y_vert_max), cv::Scalar(0, 0, 255), 1,
-      //          8);
+      //         8);
     } else {
       RCLCPP_ERROR(this->get_logger(),
                    "Wrong vertical clustered lines Count: %zu. Returning..",
@@ -541,9 +542,10 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "----------------------");
     // draw horizontal lines
     if (h_clustered.size() == 4) {
-      // cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[0]),
-      //          cv::Point(x_horiz_max, h_clustered[0]), cv::Scalar(0, 0, 255),
-      //          1, 8);
+      //  cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[0]),
+      //           cv::Point(x_horiz_max, h_clustered[0]), cv::Scalar(0, 0,
+      //           255), 1,
+      //         8);
       // cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[1]),
       //          cv::Point(x_horiz_max, h_clustered[1]), cv::Scalar(0, 0, 255),
       //          1, 8);
@@ -551,12 +553,13 @@ private:
       //          cv::Point(x_horiz_max, h_clustered[2]), cv::Scalar(0, 0, 255),
       //          1, 8);
       // cv::line(img_cropped, cv::Point(x_horiz_min, h_clustered[3]),
-      //          cv::Point(x_horiz_max, h_clustered[3]), cv::Scalar(0, 0, 255),
-      //          1, 8);
+      //         cv::Point(x_horiz_max, h_clustered[3]), cv::Scalar(0, 0, 255),
+      //         1,
+      //        8);
     } else {
       RCLCPP_ERROR(this->get_logger(),
                    "Wrong horizontal clustered lines Count: %zu. Returning..",
-                   clustered.size());
+                   h_clustered.size());
       return std::pair<cv::Mat, std::vector<int>>(img_cropped,
                                                   game_board_grid_state);
     }
@@ -627,7 +630,7 @@ private:
       RCLCPP_DEBUG(this->get_logger(), "At step %d in the shape detec loop", i);
       // square 1 contour process
       // generate square ROI
-      cv::Rect square_roi = generate_square_roi(i, 5, 5, 1, 1, 6);
+      cv::Rect square_roi = generate_square_roi(i, 5, 5, 10, 1, 6);
 
       if (!clampRectToMat(edges, square_roi)) {
         RCLCPP_WARN(
@@ -849,25 +852,23 @@ private:
 
   int detect_shape(std::vector<cv::Point> contour) {
     double area = cv::contourArea(contour);
-    if (area < 80) {
+    if (area < 1000) {
       RCLCPP_DEBUG(this->get_logger(), "No Shape");
       return 0;
     }
 
-    // Calculate solidity (area / convex hull area)
-    std::vector<cv::Point> hull;
-    cv::convexHull(contour, hull);
-    double hull_area = cv::contourArea(hull);
-    double solidity = area / hull_area;
+    // Calculate circularity (4π * area / perimeter²)
+    double perimeter = cv::arcLength(contour, true);
+    double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
 
-    RCLCPP_DEBUG(this->get_logger(), "solidity: %.2f", solidity);
+    RCLCPP_DEBUG(this->get_logger(), "circularity: %.2f", circularity);
 
-    if (solidity < 0.85) {
-      RCLCPP_DEBUG(this->get_logger(), "Cross");
-      return 1;
-    } else if (solidity > 0.9) {
+    if (circularity > 0.85) {
       RCLCPP_DEBUG(this->get_logger(), "Circle");
       return 2;
+    } else if (circularity < 0.65) {
+      RCLCPP_DEBUG(this->get_logger(), "Cross");
+      return 1;
     } else {
       RCLCPP_DEBUG(this->get_logger(), "Uncertain");
       return -1;
