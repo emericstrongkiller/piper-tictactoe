@@ -27,15 +27,15 @@
                         <div class="panel-card">
                             <h3>Robot Positions</h3>
                             <div class="position-grid">
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(6)">7</button>
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(7)">8</button>
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(8)">9</button>
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(3)">4</button>
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(4)">5</button>
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(5)">6</button>
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(0)">1</button>
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(1)">2</button>
-                                <button class="pos-btn" :disabled="!connected" @click="goToPos(2)">3</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(6)">6</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(7)">7</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(8)">8</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(3)">3</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(4)">4</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(5)">5</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(0)">0</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(1)">1</button>
+                                <button class="pos-btn" :disabled="!connected" @click="goToPos(2)">2</button>
                             </div>
                             <div class="action-buttons">
                                 <button class="action-btn" :disabled="!connected" @click="goToPos(10)">Stand-by</button>
@@ -66,14 +66,28 @@
                                 <div v-for="index in [6,7,8,3,4,5,0,1,2]" :key="index" class="grid-cell">
                                     <div v-if="game_board_state[index] === 0" class="empty-cell"></div>
                                     <img v-else-if="game_board_state[index] === 1" src="./images/cross.png"
-                                        class="shape-img" alt="X" />
+                                        class="shape-img" alt="X" width="50" />
                                     <img v-else-if="game_board_state[index] === 2" src="./images/circle.png"
-                                        class="shape-img" alt="O" />
+                                        class="shape-img" alt="O" width="50" />
                                     <div v-else class="undefined-cell">?</div>
                                 </div>
                             </div>
                             <div class="board-status">
                                 <p>Board State: {{ game_board_state }}</p>
+                            </div>
+                            <div v-if="winner === 1" class="winner-display">
+                                <img src="./images/cross.png" class="shape-img" alt="X"
+                                    style="width:50px;height:50px;max-width:50px;max-height:50px;" />
+                                Cross WINS!
+
+                            </div>
+                            <div v-else-if="winner === 2" class="winner-display">
+                                <img src="./images/circle.png" class="shape-img" alt="X"
+                                    style="width:50px;height:50px;max-width:50px;max-height:50px;" />
+                                Circle WINS!
+                            </div>
+                            <div v-else-if="winner === 3" class="winner-display">
+                                Its a DRAW
                             </div>
                         </div>
 
@@ -113,27 +127,26 @@
 
             <!-- Camera processsss -->
             <div class="right-panel">
+                <!--
                 <div class="panel-card slider panel">
                     <h3>Perception params</h3>
-                    <input type="range" min="0" max="20" v-model.number="slider_val" />
+                    <input type="range" min="1" max="8" v-model.number="slider_val" />
                     <span>{{ slider_val }}</span>
-                    <input type="range" min="0" max="20" v-model.number="slider2_val" />
+                    <input type="range" min="2" max="20" v-model.number="slider2_val" />
                     <span>{{ slider2_val }}</span>
-                    <input type="range" min="0" max="20" v-model.number="slider3_val" />
+                    <input type="range" min="0" max="200" v-model.number="slider3_val" />
                     <span>{{ slider3_val }}</span>
                 </div>
+                -->
                 <div class="panel-card camera-panel">
                     <h3>Camera Feed</h3>
                     <select v-model="video_server" class="video-select">
                         <option value="/camera/D435/color/image_raw">Raw Image</option>
-                        <option value="/perception_server">Perception</option>
-                        <option value="/cvtColor_perception_server">Color Convert</option>
-                        <option value="/no_shadow_perception_server">No Shadow</option>
                         <option value="/grid_lines_perception_server">grid-lines</option>
-                        <option value="/roi_image_perception_server">ROI</option>
-                        <option value="/test_gray_standard">Gray Standard</option>
-                        <option value="/adaptive_canny_perception_server">adaptive-canny</option>
-                        <option value="/test_color_filter">Color Filter</option>
+                        <option value="/vertical_filter_perception_server">vertically-filtered</option>
+                        <option value="/horizontal_filter_perception_server">horizontally-filtered</option>
+                        <option value="/detected_grid_perception_server">detected-grid</option>
+                        <option value="/perception_server">final-perception</option>
                     </select>
                     <div id="divCamera" class="camera-container"></div>
                 </div>

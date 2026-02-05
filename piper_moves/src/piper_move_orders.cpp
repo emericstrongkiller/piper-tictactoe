@@ -47,6 +47,11 @@ public:
             std::bind(&PiperMoveOrders::game_start_subscriber_callback, this,
                       _1));
 
+    // new game topic sub
+    new_game_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
+        "/new_game", 10,
+        std::bind(&PiperMoveOrders::new_game_subscriber_callback, this, _1));
+
     // first piper order
     current_order_ = std::make_shared<std_msgs::msg::Int32MultiArray>();
     current_game_board_squares_ =
@@ -65,7 +70,6 @@ public:
                   "Asking camera to query the board game grid..");
       camera_current_order_.data = true;
       camera_order_publisher_->publish(camera_current_order_);
-
     } else {
       RCLCPP_INFO(this->get_logger(), "ERROR executing the order..");
     }
@@ -81,7 +85,7 @@ public:
         this->get_logger(),
         "Received best_move from minMaxTicTacToe, about to send move_order..");
     for (size_t i = 0; i < msg->data.size(); i++) {
-      RCLCPP_INFO(this->get_logger(), "msg->data[i]: %d", msg->data[i]);
+      RCLCPP_DEBUG(this->get_logger(), "msg->data[i]: %d", msg->data[i]);
       if (static_cast<int>(i) < 2) {
         current_order_->data.push_back(msg->data[i]);
       } else {
@@ -92,7 +96,15 @@ public:
     if (current_order_->data[1] == 2) {
       current_order_->data[1] = 0;
     }
-    order_publisher_->publish(*current_order_);
+    if (current_order_->data[1] != -1 && current_order_->data[0] != -1) {
+      RCLCPP_INFO(this->get_logger(), "Tempo...");
+      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+      RCLCPP_INFO(this->get_logger(), "MOVING TO POS: %d",
+                  current_order_->data[0]);
+      order_publisher_->publish(*current_order_);
+    } else {
+      RCLCPP_INFO(this->get_logger(), "Invalid best move! Game ended ?");
+    }
   }
 
   void game_start_subscriber_callback(
@@ -103,6 +115,8 @@ public:
     game_infos_.data = msg->data;
     // either start game or start asking camera to query game board depending on
     // shape chosen for the robot
+    RCLCPP_INFO(this->get_logger(), "ROBOT SHAPE FOR THIS GAME: %d",
+                msg->data[0]);
     if (first_turn_) {
       // circle => check human first move with camera
       if (game_infos_.data[0] == 2) {
@@ -120,6 +134,12 @@ public:
       }
       first_turn_ = false;
     }
+  }
+
+  void new_game_subscriber_callback(const std_msgs::msg::Bool::SharedPtr msg) {
+    // init first turn   so that we start a nwe game cleeean
+    RCLCPP_INFO(this->get_logger(), "Ready to start new Game !");
+    first_turn_ = msg->data;
   }
 
 private:
@@ -140,6 +160,9 @@ private:
   // shape infos
   std_msgs::msg::Int32MultiArray game_infos_;
   bool first_turn_;
+
+  // new game sub
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr new_game_subscriber_;
 };
 
 int main(int argc, char **argv) {

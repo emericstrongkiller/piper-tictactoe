@@ -107,6 +107,13 @@ public:
   }
 
   void target_plan() {
+    // Validate order
+    if (current_order_[0] < 0 || current_order_[0] > 12) {
+      RCLCPP_WARN(logger_, "Invalid order position: %d. Ignoring.",
+                  current_order_[0]);
+      return;
+    }
+
     // get piper Pose
     piper_curr_pos_ = piper_interface_->getCurrentPose();
     RCLCPP_INFO(logger_, "got EndEffector: %s",
@@ -184,7 +191,7 @@ public:
     }
 
     // if there is a shape in the current_order, draw it and retract
-    if (current_order_.size() > 1) {
+    if (current_order_.size() > 1 && current_order_[0] < 10) {
       // create plan
       // prompt_("Press 'Next' in the RvizVisualToolsGui window to plan");
       draw_title_("Planning");

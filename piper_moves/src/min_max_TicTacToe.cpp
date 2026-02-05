@@ -116,6 +116,10 @@ private:
   }
 
   std_msgs::msg::Int32MultiArray find_best_move() {
+    if (check_full_board()) {
+      best_move_.data = {-1, -1}; // Invalid move indicator
+      return best_move_;
+    }
     int best_score = -100;
 
     // apply min_max algo on each free grid square
