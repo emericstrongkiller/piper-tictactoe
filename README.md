@@ -10,10 +10,10 @@ The robot uses a minimax algorithm to make optimal moves, OpenCV for board detec
 
 ## Components
 
-- **X_draw_trajectory**: Motion planning with MoveIt to draw shapes on the board
-- **min_max_TicTacToe**: AI decision-making (minimax algorithm)
-- **take_pic**: Camera perception with OpenCV for board state recognition
-- **piper_move_orders**: Game orchestration node (connects everything)
+- **trajectory_node**: Motion planning with MoveIt to draw shapes on the board
+- **best_move_node**: AI decision-making (minimax algorithm)
+- **perception_node**: Camera perception with OpenCV for board state recognition
+- **orders_node**: Game orchestration node (connects everything)
 
 ## Setup
 
@@ -25,6 +25,14 @@ The robot uses a minimax algorithm to make optimal moves, OpenCV for board detec
 
 ### Quick Start
 
+#### Start Webapp:
+**WebApp:**
+```bash
+./setup_scripts/webpage-ROSBrige_run.sh
+```
+
+#### Then run the game:
+
 **Simulation:**
 ```bash
 ./setup_scripts/simulation/all_sim_launch.sh
@@ -35,17 +43,9 @@ The robot uses a minimax algorithm to make optimal moves, OpenCV for board detec
 ./setup_scripts/real_robot/real-robot_bringup.sh
 ```
 
-Then run the game:
-```bash
-ros2 launch piper_moves joint_space_trajectory.launch.py
-ros2 run piper_moves min_max_TicTacToe &
-ros2 run piper_moves piper_move_orders &
-ros2 run piper_moves take_pic &
-```
-
 ## Web Interface
 
-There's a simple web dashboard in `webpage_ws/` for controlling the game.
+A simple web dashboard for controlling the game.
 
 ![web_interface](images/web_interface.png)
 
@@ -54,17 +54,15 @@ There's a simple web dashboard in `webpage_ws/` for controlling the game.
 ![system_diagram](images/system_diagram.png)
 
 ## How It Works
-
 1. Camera takes a picture of the board
-2. Minimax AI calculates the best move
+2. best_move_node (Minimax algorithm) calculates the best move
 3. Robot draws the selected shape (X or O)
 4. Repeat until someone wins
 
 ## Notes
 
-- Camera calibration needed for real robot (see `real_robot_calibration/`)
 - Adjust grid positions in `piper_move_orders.cpp` for different board sizes
-- Some parts still need cleanup (sorry about that)
+- Some parts still need cleanup (sorry about that 😁)
 
 ## License
 
